@@ -2,16 +2,16 @@ import time
 import pandas as pd
 from binance.client import Client
 
-# 1. إعداد مفاتيح API (صلاحية القراءة فقط تكفي)
-API_KEY = 'mSAUOghMbvTuUvnoegJImtchLlpVcFS2SnKlvwE08Oh7Bs3e87tK5UVY9P0dPtvu'
-API_SECRET = 'zyPGddSLzM4wHZUoMFErLiC4ytBahmANCUBnWQtcTJhVkV7RytnkPVK07QfXh7fj'
+# 1. API Configuration (Read-only permissions are sufficient)
+API_KEY = 'YOUR_API_KEY'
+API_SECRET = 'YOUR_API_SECRET'
 
 client = Client(API_KEY, API_SECRET)
 
-SYMBOL = 'ACTUSDT'
-INTERVAL = Client.KLINE_INTERVAL_1MINUTE  # الإطار الزمني للشموع
+SYMBOL = 'BTCUSDT'
+INTERVAL = Client.KLINE_INTERVAL_1MINUTE  # Candlestick time frame
 
-# 2. دالة حساب مؤشر RSI
+# 2. RSI Calculation Function
 def calculate_rsi(data, window=14):
     delta = data['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -19,9 +19,9 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# 3. دالة جلب وتحليل بيانات السوق
+# 3. Market Data Fetching & Analysis Function
 def analyze_market():
-    # جلب آخر 100 شمعة
+    # Fetch the last 100 candlesticks
     klines = client.get_klines(symbol=SYMBOL, interval=INTERVAL, limit=100)
     df = pd.DataFrame(klines, columns=['time', 'open', 'high', 'low', 'close', 'volume', '_', '_', '_', '_', '_', '_'])
     
@@ -29,42 +29,42 @@ def analyze_market():
     df['high'] = df['high'].astype(float)
     df['low'] = df['low'].astype(float)
     
-    # حساب المؤشرات والأسعار
+    # Calculate indicators and current price
     current_price = df['close'].iloc[-1]
     rsi_series = calculate_rsi(df)
     latest_rsi = rsi_series.iloc[-1]
     
-    # تحديد مستويات الدعم والمقاومة البسيطة (أعلى وأقل سعر في آخر 20 شمعة)
+    # Determine basic support and resistance levels (Min/Max over the last 20 candles)
     support_level = df['low'].tail(20).min()
     resistance_level = df['high'].tail(20).max()
     
     return current_price, latest_rsi, support_level, resistance_level
 
-# 4. حلقة المراقبة والتحليل المستمر
-print(f"بدء مراقبة وتحديد مناطق الشراء والبيع لزوج {SYMBOL}...\n")
+# 4. Continuous Monitoring & Analysis Loop
+print(f"Starting market analysis and zone identification for {SYMBOL}...\n")
 
 while True:
     try:
         price, rsi, support, resistance = analyze_market()
         
         print(f"--- [ {time.strftime('%H:%M:%S')} ] ---")
-        print(f"السعر الحالي: ${price:.2f}")
-        print(f"قيمة RSI: {rsi:.2f}")
-        print(f"منطقة الدعم (الشراء): ${support:.2f} | منطقة المقاومة (البيع): ${resistance:.2f}")
+        print(f"Current Price: ${price:.2f}")
+        print(f"RSI Value: {rsi:.2f}")
+        print(f"Support (Buy Zone): ${support:.2f} | Resistance (Sell Zone): ${resistance:.2f}")
         
-        # تحديد الإشارات بناءً على التحليل
+        # Generate signals based on indicators
         if rsi <= 30 or price <= support * 1.001:
-            print("🟢 [إشارة شراء]: السعر يقترب من منطقة دعم أو تشبع بيعي.")
+            print("🟢 [BUY SIGNAL]: Price near support zone or oversold condition.")
         elif rsi >= 70 or price >= resistance * 0.999:
-            print("🔴 [إشارة بيع]: السعر يقترب من منطقة مقاومة أو تشبع شرائي.")
+            print("🔴 [SELL SIGNAL]: Price near resistance zone or overbought condition.")
         else:
-            print("⚪ [منطقة محايدة]: الانتظار لحين وصول السعر لنقطة دخول مناسبة.")
+            print("⚪ [NEUTRAL ZONE]: Waiting for a clear entry point.")
             
         print("-" * 40 + "\n")
         
-        # الانتظار دقيقة قبل التحديث التالي
+        # Wait for 60 seconds before the next check
         time.sleep(60)
 
     except Exception as e:
-        print(f"حدث خطأ أثناء جلب البيانات: {e}")
+        print(f"Error fetching data: {e}")
         time.sleep(10)
