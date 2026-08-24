@@ -11,7 +11,7 @@ client = Client(API_KEY, API_SECRET)
 SYMBOL = 'BTCUSDT'
 INTERVAL = Client.KLINE_INTERVAL_1MINUTE
 
-# 2. Technical Indicator Functions
+# 2. Indicator Calculation Functions
 def calculate_rsi(data, window=14):
     delta = data['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -26,7 +26,7 @@ def calculate_atr(data, window=14):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     return tr.rolling(window=window).mean()
 
-# 3. Market Analysis Function
+# 3. Market Data Fetching & Analysis Function
 def analyze_market():
     klines = client.get_klines(symbol=SYMBOL, interval=INTERVAL, limit=100)
     df = pd.DataFrame(klines, columns=['time', 'open', 'high', 'low', 'close', 'volume', '_', '_', '_', '_', '_', '_'])
@@ -43,55 +43,71 @@ def analyze_market():
     
     return current_price, rsi, atr, support, resistance
 
-# 4. Assessment & Description Generator
-def evaluate_opportunity(price, rsi, atr, support, resistance):
-    dist_to_support = ((price - support) / price) * 100
-    dist_to_resistance = ((resistance - price) / price) * 100
+# 4. Structured Report & Description Generator
+def generate_structured_report(price, rsi, atr, support, resistance):
+    dist_to_support_pct = ((price - support) / price) * 100
+    dist_to_resistance_pct = ((resistance - price) / price) * 100
     
-    # Buy Signal Logic
-    if rsi <= 35 or dist_to_support <= 0.2:
-        signal = "🟢 [BUY OPPORTUNITY]"
-        reason = (
-            f"Strong risk-to-reward ratio. RSI is at {rsi:.1f} (Oversold threshold <= 35), "
-            f"and price is within {dist_to_support:.2f}% of support (${support:.2f}). "
-            f"Volatility (ATR) is ${atr:.2f}, indicating a potential reversal bounce."
+    # Buy Setup Evaluation
+    if rsi <= 35 or dist_to_support_pct <= 0.2:
+        verdict = "🟢 HIGH CONVICTION BUY"
+        quality = "FAVORABLE (High Reward-to-Risk Ratio)"
+        summary = (
+            "Asset is approaching key demand levels with selling momentum exhausting. "
+            "Entering near support reduces downside exposure while maximizing potential bounce margin."
         )
-    # Sell Signal Logic
-    elif rsi >= 65 or dist_to_resistance <= 0.2:
-        signal = "🔴 [SELL / TAKE-PROFIT OPPORTUNITY]"
-        reason = (
-            f"Overextended momentum. RSI is at {rsi:.1f} (Overbought threshold >= 65), "
-            f"and price is within {dist_to_resistance:.2f}% of resistance (${resistance:.2f}). "
-            f"High probability of upside exhaustion or pullbacks."
+    # Sell Setup Evaluation
+    elif rsi >= 65 or dist_to_resistance_pct <= 0.2:
+        verdict = "🔴 HIGH CONVICTION SELL / TAKE-PROFIT"
+        quality = "FAVORABLE (Overextended Bullish Momentum)"
+        summary = (
+            "Asset is testing key supply/overhead resistance levels with buying volume fading. "
+            "High probability of price rejection or mean-reversion pullback."
         )
-    # Neutral Logic
+    # Neutral Setup Evaluation
     else:
-        signal = "⚪ [POOR / NEUTRAL OPPORTUNITY]"
-        reason = (
-            f"No edge detected. RSI sits at a neutral {rsi:.1f} (Mid-range 36–64), "
-            f"and price is floating between support (${support:.2f}) and resistance (${resistance:.2f}). "
-            f"Risk of chop is high; wait for price to test key boundary zones."
+        verdict = "⚪ NEUTRAL / NO TRADE ZONE"
+        quality = "UNFAVORABLE (High Risk of Consolidation / Chop)"
+        summary = (
+            "Price is hovering mid-range between support and resistance boundaries without clear momentum. "
+            "Lacks statistical edge; preserve capital and wait for boundary confirmation."
         )
-        
-    return signal, reason
+
+    # Format the structured report output
+    report = f"""
+================================================================================
+                    MARKET ANALYSIS REPORT | {SYMBOL}
+================================================================================
+[1] MARKET METRICS & INDICATORS
+    • Current Price       : ${price:.2f}
+    • RSI (14 Period)     : {rsi:.2f}  [Oversold: ≤35 | Overbought: ≥65]
+    • ATR Volatility (14) : ${atr:.2f}
+    • Support Level (20)  : ${support:.2f}  (Distance: {dist_to_support_pct:.2f}%)
+    • Resistance Level(20): ${resistance:.2f}  (Distance: {dist_to_resistance_pct:.2f}%)
+
+[2] OPPORTUNITY EVALUATION
+    • Status / Verdict    : {verdict}
+    • Opportunity Quality : {quality}
+
+[3] TECHNICAL RATIONALE & ANALYSIS
+    {summary}
+================================================================================
+"""
+    return report
 
 # 5. Continuous Loop
-print(f"Monitoring {SYMBOL} with detailed setup descriptions...\n")
+print(f"Monitoring {SYMBOL} with structured trade reports...\n")
 
 while True:
     try:
         price, rsi, atr, support, resistance = analyze_market()
-        signal, description = evaluate_opportunity(price, rsi, atr, support, resistance)
+        report = generate_structured_report(price, rsi, atr, support, resistance)
         
-        print(f"--- [ {time.strftime('%H:%M:%S')} ] ---")
-        print(f"Price: ${price:.2f} | RSI (14): {rsi:.2f} | ATR (14): ${atr:.2f}")
-        print(f"Key Zones: Support ${support:.2f} <----> Resistance ${resistance:.2f}")
-        print(f"Signal: {signal}")
-        print(f"Analysis: {description}")
-        print("-" * 50 + "\n")
+        print(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(report)
         
         time.sleep(60)
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error fetching data: {e}")
         time.sleep(10)
