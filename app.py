@@ -3,8 +3,8 @@ import pandas as pd
 from binance.client import Client
 
 # 1. API Configuration (Read-only permissions are sufficient)
-API_KEY = 'YOUR_API_KEY'
-API_SECRET = 'YOUR_API_SECRET'
+API_KEY = 'mSAUOghMbvTuUvnoegJImtchLlpVcFS2SnKlvwE08Oh7Bs3e87tK5UVY9P0dPtvu'
+API_SECRET = 'zyPGddSLzM4wHZUoMFErLiC4ytBahmANCUBnWQtcTJhVkV7RytnkPVK07QfXh7fj'
 
 client = Client(API_KEY, API_SECRET)
 
