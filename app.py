@@ -22,6 +22,7 @@ POLL_SECONDS = 60
 TESTNET = True
 TRADING_ENABLED = os.getenv("ENABLE_TRADING", "false").lower() == "true"
 STATE_FILE = Path(__file__).with_name("trade_state.json")
+TRANSACTION_FILE = Path(__file__).with_name("transactions.jsonl")
 
 
 def create_client():
@@ -99,6 +100,12 @@ def clear_position():
         STATE_FILE.unlink()
 
 
+def record_transaction(transaction):
+    transaction["recorded_at"] = int(time.time())
+    with TRANSACTION_FILE.open("a", encoding="utf-8") as history_file:
+        history_file.write(json.dumps(transaction) + "\n")
+
+
 def get_free_balance(client, asset):
     balance = client.get_asset_balance(asset=asset)
     return Decimal(balance["free"]) if balance else Decimal("0")
@@ -147,6 +154,17 @@ def buy(client, analysis):
         "opened_at": int(time.time()),
     }
     save_position(position)
+    record_transaction(
+        {
+            "side": "BUY",
+            "symbol": SYMBOL,
+            "order_id": order["orderId"],
+            "quantity": str(executed_quantity),
+            "price": str(average_price),
+            "quote_amount": str(quote_spent),
+            "reason": "strategy buy signal",
+        }
+    )
     print(f"BUY filled: {executed_quantity} {BASE_ASSET} at about {average_price:.2f}")
     return position
 
@@ -166,6 +184,22 @@ def sell(client, position, reason):
         type=Client.ORDER_TYPE_MARKET,
         quantity=format(quantity, "f"),
         newOrderRespType="FULL",
+    )
+    quote_received = Decimal(order["cummulativeQuoteQty"])
+    average_price = quote_received / Decimal(order["executedQty"])
+    entry_price = Decimal(position["entry"])
+    estimated_pnl = (average_price - entry_price) * quantity
+    record_transaction(
+        {
+            "side": "SELL",
+            "symbol": SYMBOL,
+            "order_id": order["orderId"],
+            "quantity": str(quantity),
+            "price": str(average_price),
+            "quote_amount": str(quote_received),
+            "reason": reason,
+            "estimated_pnl_usdt": str(estimated_pnl),
+        }
     )
     clear_position()
     print(f"SELL filled: {quantity} {BASE_ASSET}. Reason: {reason}")

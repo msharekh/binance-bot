@@ -21,6 +21,7 @@ orders use simulated funds and do not buy or sell real cryptocurrency.
 - Python 3.9 or newer
 - `pandas`
 - `python-binance`
+- `streamlit` for the local transaction dashboard
 - Binance Spot Testnet API credentials
 
 ## Create the virtual environment
@@ -55,13 +56,13 @@ application:
 
 ```powershell
 python -m pip install --upgrade pip
-python -m pip install pandas python-binance
+python -m pip install pandas python-binance streamlit
 ```
 
 Confirm that the packages were installed into the active environment:
 
 ```powershell
-python -m pip show pandas python-binance
+python -m pip show pandas python-binance streamlit
 ```
 
 Do not install the package named only `binance`; it is a different library and
@@ -71,7 +72,7 @@ If you do not want to activate the environment, you can install the packages
 through its Python executable directly:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install pandas python-binance
+.\.venv\Scripts\python.exe -m pip install pandas python-binance streamlit
 ```
 
 ## Configure Spot Testnet
@@ -131,6 +132,26 @@ The stop loss and take profit are evaluated by this running Python process;
 they are not protective orders stored at Binance. If the program or computer
 stops, those exits cannot execute. Use the Testnet to validate behavior before
 considering any production-trading design.
+
+## Transaction dashboard
+
+Keep the bot running in its PowerShell window. Open a second PowerShell window
+in the project directory and start the dashboard:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run dashboard.py
+```
+
+The browser dashboard refreshes every five seconds and displays:
+
+- The currently tracked position and its stop-loss/take-profit levels
+- Filled testnet buy and sell orders
+- Estimated realized profit or loss before commissions
+- A CSV download of the transaction history
+
+The bot begins recording transactions after this feature is installed. Orders
+placed before then are not present in `transactions.jsonl` and cannot appear in
+the dashboard. Stop the dashboard with `Ctrl+C` in its terminal.
 
 When you are finished using an activated environment, leave it with:
 
