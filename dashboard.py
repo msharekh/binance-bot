@@ -62,21 +62,27 @@ st.markdown(
     .hold-banner {padding:.55rem .75rem;margin-bottom:.5rem;border-radius:.5rem;
       background:#7c2d12;color:#ffedd5;border:1px solid #f97316;
       font-size:1.05rem;font-weight:900;text-align:center;letter-spacing:.04em}
-    .market-check-card {padding:.62rem .72rem;margin-bottom:.45rem;border-radius:.65rem;
-      background:#0f172a;border:1px solid #475569;min-height:9.2rem}
+    .market-check-row {display:flex;gap:.3rem;overflow-x:auto;padding-bottom:.18rem;
+      scrollbar-width:thin}
+    .market-check-card {flex:0 0 175px;padding:.34rem .42rem;margin-bottom:.2rem;
+      border-radius:.5rem;background:#0f172a;border:1px solid #475569}
     .market-check-buy {border-color:#22c55e;background:linear-gradient(135deg,#052e16,#0f172a)}
     .market-check-sell,.market-check-error {border-color:#ef4444;background:linear-gradient(135deg,#450a0a,#0f172a)}
     .market-check-monitoring {border-color:#38bdf8;background:linear-gradient(135deg,#082f49,#0f172a)}
     .market-check-neutral {border-color:#eab308;background:linear-gradient(135deg,#422006,#0f172a)}
     .market-check-head {display:flex;justify-content:space-between;align-items:center;gap:.4rem}
-    .market-check-symbol {color:#f8fafc;font-size:1.08rem;font-weight:900;letter-spacing:.04em}
-    .market-check-status {padding:.18rem .42rem;border-radius:999px;background:#020617;
-      color:#e2e8f0;font-size:.7rem;font-weight:800;white-space:nowrap}
-    .market-check-signal {margin:.25rem 0;color:#fde68a;font-size:.78rem;font-weight:900}
+    .market-check-symbol {color:#f8fafc;font-size:.96rem;font-weight:900;letter-spacing:.03em}
+    .market-check-status {padding:.12rem .3rem;border-radius:999px;background:#020617;
+      color:#e2e8f0;font-size:.62rem;font-weight:800;white-space:nowrap;
+      max-width:56%;overflow:hidden;text-overflow:ellipsis}
+    .market-check-signal {margin:.14rem 0;color:#fde68a;font-size:.7rem;font-weight:900}
     .market-check-grid {display:grid;grid-template-columns:repeat(2,1fr);gap:.22rem .65rem}
-    .market-check-stat {color:#94a3b8;font-size:.7rem;text-transform:uppercase;font-weight:700}
-    .market-check-stat span {display:block;color:#e2e8f0;font-size:.78rem;
+    .market-check-stat {color:#94a3b8;font-size:.62rem;text-transform:uppercase;font-weight:700}
+    .market-check-stat span {display:block;color:#e2e8f0;font-size:.72rem;
       text-transform:none;font-weight:800}
+    .market-check-levels {margin-top:.15rem;color:#cbd5e1;font-size:.65rem}
+    .market-check-levels summary {cursor:pointer;font-weight:800;color:#94a3b8}
+    .market-check-levels .market-check-grid {margin-top:.2rem}
     @keyframes market-cycle-flash {0%{filter:brightness(2);transform:scale(1.015);
       box-shadow:0 0 22px currentColor}100%{filter:brightness(1);transform:scale(1);
       box-shadow:none}}
@@ -541,48 +547,55 @@ def render_market_check_cards():
     else:
         st.warning("WAITING FOR BOT STATUS - start app.py to receive market checks.")
 
-    for start in range(0, len(target_symbols), 3):
-        columns = st.columns(3, gap="small")
-        for column, symbol in zip(columns, target_symbols[start : start + 3]):
-            market = markets.get(symbol, {})
-            market_status = str(
-                market.get("status")
-                or status.get("market_statuses", {}).get(symbol, "CHECK PENDING")
-            )
-            signal = str(market.get("signal", "CHECK PENDING"))
-            if "ERROR" in market_status:
-                color_class = "market-check-error"
-            elif "BUY" in signal:
-                color_class = "market-check-buy"
-            elif "SELL" in signal:
-                color_class = "market-check-sell"
-            elif market_status == "MONITORING":
-                color_class = "market-check-monitoring"
-            else:
-                color_class = "market-check-neutral"
-            flash_class = "market-check-flash" if should_flash else ""
-            with column:
-                st.markdown(
-                    f"""
-                    <div class="market-check-card {color_class} {flash_class}">
-                      <div class="market-check-head">
-                        <span class="market-check-symbol">{html.escape(symbol)}</span>
-                        <span class="market-check-status">{html.escape(market_status)}</span>
-                      </div>
-                      <div class="market-check-signal">{html.escape(signal)}</div>
-                      <div class="market-check-grid">
-                        <div class="market-check-stat">Price<span>{format_market_number(market.get('price'))}</span></div>
-                        <div class="market-check-stat">RSI<span>{format_market_number(market.get('rsi'), 2)}</span></div>
-                        <div class="market-check-stat">ATR<span>{format_market_number(market.get('atr'))}</span></div>
-                        <div class="market-check-stat">Support<span>{format_market_number(market.get('support'))}</span></div>
-                        <div class="market-check-stat">Resistance<span>{format_market_number(market.get('resistance'))}</span></div>
-                        <div class="market-check-stat">Suggested SL<span>{format_market_number(market.get('suggested_sl'))}</span></div>
-                        <div class="market-check-stat">Suggested TP<span>{format_market_number(market.get('suggested_tp'))}</span></div>
-                      </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+    cards = []
+    for symbol in target_symbols:
+        market = markets.get(symbol, {})
+        market_status = str(
+            market.get("status")
+            or status.get("market_statuses", {}).get(symbol, "CHECK PENDING")
+        )
+        signal = str(market.get("signal", "CHECK PENDING"))
+        if "ERROR" in market_status:
+            color_class = "market-check-error"
+        elif "BUY" in signal:
+            color_class = "market-check-buy"
+        elif "SELL" in signal:
+            color_class = "market-check-sell"
+        elif market_status == "MONITORING":
+            color_class = "market-check-monitoring"
+        else:
+            color_class = "market-check-neutral"
+        flash_class = "market-check-flash" if should_flash else ""
+        cards.append(
+            f'<div class="market-check-card {color_class} {flash_class}">'
+            f'<div class="market-check-head">'
+            f'<span class="market-check-symbol">{html.escape(symbol)}</span>'
+            f'<span class="market-check-status" title="{html.escape(market_status)}">'
+            f'{html.escape(market_status)}</span></div>'
+            f'<div class="market-check-signal">{html.escape(signal)}</div>'
+            f'<div class="market-check-grid">'
+            f'<div class="market-check-stat">Price<span>'
+            f'{format_market_number(market.get("price"))}</span></div>'
+            f'<div class="market-check-stat">RSI<span>'
+            f'{format_market_number(market.get("rsi"), 2)}</span></div></div>'
+            f'<details class="market-check-levels"><summary>Levels</summary>'
+            f'<div class="market-check-grid">'
+            f'<div class="market-check-stat">ATR<span>'
+            f'{format_market_number(market.get("atr"))}</span></div>'
+            f'<div class="market-check-stat">Support<span>'
+            f'{format_market_number(market.get("support"))}</span></div>'
+            f'<div class="market-check-stat">Resistance<span>'
+            f'{format_market_number(market.get("resistance"))}</span></div>'
+            f'<div class="market-check-stat">Suggested SL<span>'
+            f'{format_market_number(market.get("suggested_sl"))}</span></div>'
+            f'<div class="market-check-stat">Suggested TP<span>'
+            f'{format_market_number(market.get("suggested_tp"))}</span></div>'
+            f'</div></details></div>'
+        )
+    st.markdown(
+        f'<div class="market-check-row">{"".join(cards)}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 @st.fragment(run_every=5)
