@@ -24,6 +24,7 @@ DEFAULT_MAX_TOTAL_EXPOSURE_USDT = Decimal(
 )
 MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
 POLL_SECONDS = 60
+LIVE_PRICE_REFRESH_SECONDS = 10
 SUGGESTION_REFRESH_SECONDS = 15 * 60
 
 # Comma-separated USDT markets, for example: BTCUSDT,ETHUSDT,TRXUSDT
@@ -44,6 +45,7 @@ TRADING_ENABLED = os.getenv("ENABLE_TRADING", "false").lower() == "true"
 STATE_FILE = Path(__file__).with_name("trade_state.json")
 TRANSACTION_FILE = Path(__file__).with_name("transactions.jsonl")
 STATUS_FILE = Path(__file__).with_name("bot_status.json")
+LIVE_PRICE_FILE = Path(__file__).with_name("live_prices.json")
 CONFIG_FILE = Path(__file__).with_name("bot_config.json")
 SELL_REQUEST_FILE = Path(__file__).with_name("sell_requests.jsonl")
 SELL_PROCESSING_FILE = Path(__file__).with_name("sell_requests.processing.jsonl")
@@ -249,6 +251,66 @@ def save_status(
     temporary_file.replace(STATUS_FILE)
 
 
+def refresh_live_prices(client, symbols):
+    previous = {}
+    if LIVE_PRICE_FILE.exists():
+        try:
+            with LIVE_PRICE_FILE.open("r", encoding="utf-8") as live_file:
+                saved = json.load(live_file)
+            if saved.get("environment") == ENVIRONMENT:
+                previous = saved.get("prices", {})
+        except (OSError, json.JSONDecodeError, TypeError):
+            previous = {}
+
+    try:
+        requested_symbols = set(symbols)
+        tickers = client.get_symbol_ticker()
+        ticker_prices = {
+            ticker["symbol"]: Decimal(str(ticker["price"]))
+            for ticker in tickers
+            if ticker.get("symbol") in requested_symbols
+        }
+    except Exception as error:
+        print(f"Could not refresh live prices: {error}")
+        return
+
+    prices = {}
+    for symbol in symbols:
+        price = ticker_prices.get(symbol)
+        if price is None:
+            continue
+        previous_price = Decimal(
+            str(previous.get(symbol, {}).get("price", price))
+        )
+        if price > previous_price:
+            direction = "UP"
+        elif price < previous_price:
+            direction = "DOWN"
+        else:
+            direction = "FLAT"
+        change_pct = (
+            ((price - previous_price) / previous_price) * Decimal("100")
+            if previous_price
+            else Decimal("0")
+        )
+        prices[symbol] = {
+            "price": str(price),
+            "previous_price": str(previous_price),
+            "direction": direction,
+            "change_pct": str(change_pct),
+        }
+
+    temporary_file = LIVE_PRICE_FILE.with_suffix(".tmp")
+    payload = {
+        "environment": ENVIRONMENT,
+        "updated_at": int(time.time()),
+        "prices": prices,
+    }
+    with temporary_file.open("w", encoding="utf-8") as live_file:
+        json.dump(payload, live_file, indent=2)
+    temporary_file.replace(LIVE_PRICE_FILE)
+
+
 def record_transaction(transaction):
     transaction["environment"] = ENVIRONMENT
     transaction["recorded_at"] = int(time.time())
@@ -273,9 +335,14 @@ def get_market_rules(client, symbol):
     filters = {item["filterType"]: item for item in symbol_info["filters"]}
     lot_size = filters["LOT_SIZE"]
     notional = filters.get("NOTIONAL") or filters.get("MIN_NOTIONAL") or {}
+    quote_precision = int(
+        symbol_info.get("quoteAssetPrecision", symbol_info.get("quotePrecision", 8))
+    )
+    quote_precision = max(0, min(20, quote_precision))
     return {
         "base_asset": symbol_info["baseAsset"],
         "quote_asset": symbol_info["quoteAsset"],
+        "quote_precision": quote_precision,
         "step_size": Decimal(lot_size["stepSize"]),
         "min_quantity": Decimal(lot_size["minQty"]),
         "min_notional": Decimal(notional.get("minNotional", "0")),
@@ -355,6 +422,8 @@ def buy(
     remaining_exposure = maximum_exposure - current_exposure(positions)
     available_usdt = get_free_balance(client, rules["quote_asset"])
     amount = min(trade_amount, remaining_exposure, available_usdt)
+    quote_step = Decimal("1").scaleb(-rules["quote_precision"])
+    amount = round_to_step(amount, quote_step)
     if amount < rules["min_notional"] or amount <= 0:
         print(f"{symbol} BUY skipped: insufficient balance or exposure allowance.")
         return None
@@ -507,11 +576,13 @@ def process_sell_requests(client, positions, rules_by_symbol):
             print(f"{symbol} manual SELL error: {error}")
 
 
-def wait_for_next_cycle(client, positions, rules_by_symbol):
+def wait_for_next_cycle(client, positions, rules_by_symbol, active_symbols):
     elapsed = 0
     while elapsed < POLL_SECONDS:
         time.sleep(min(2, POLL_SECONDS - elapsed))
         elapsed += 2
+        if elapsed < POLL_SECONDS and elapsed % LIVE_PRICE_REFRESH_SECONDS == 0:
+            refresh_live_prices(client, active_symbols)
         if TRADING_ENABLED:
             process_sell_requests(client, positions, rules_by_symbol)
 
@@ -588,6 +659,7 @@ def main():
             active_symbols = list(
                 dict.fromkeys(target_symbols + list(positions.keys()))
             )
+            refresh_live_prices(client, active_symbols)
             if time.time() - suggestions_updated_at >= SUGGESTION_REFRESH_SECONDS:
                 try:
                     suggestions = get_market_suggestions(client)
@@ -635,7 +707,7 @@ def main():
                 )
             except (BinanceAPIException, BinanceOrderException) as error:
                 print(f"Could not update account status: {error}")
-            wait_for_next_cycle(client, positions, rules_by_symbol)
+            wait_for_next_cycle(client, positions, rules_by_symbol, active_symbols)
         except KeyboardInterrupt:
             print("\nStopped.")
             break

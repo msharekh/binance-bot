@@ -13,6 +13,7 @@ PROJECT_DIR = Path(__file__).parent
 STATE_FILE = PROJECT_DIR / "trade_state.json"
 TRANSACTION_FILE = PROJECT_DIR / "transactions.jsonl"
 STATUS_FILE = PROJECT_DIR / "bot_status.json"
+LIVE_PRICE_FILE = PROJECT_DIR / "live_prices.json"
 CONFIG_FILE = PROJECT_DIR / "bot_config.json"
 SELL_REQUEST_FILE = PROJECT_DIR / "sell_requests.jsonl"
 INTERVAL_OPTIONS = [
@@ -29,9 +30,6 @@ st.markdown(
     .symbol-title {color:#38bdf8;font-size:1.18rem;font-weight:800;letter-spacing:.03em}
     .target-tag {display:inline-block;padding:.28rem .58rem;margin:.12rem;border-radius:999px;
       background:#172554;color:#bfdbfe;border:1px solid #2563eb;font-weight:700}
-    .status-waiting {background:#422006;color:#fde68a;border-color:#ca8a04}
-    .status-active {background:#052e16;color:#bbf7d0;border-color:#16a34a}
-    .status-error {background:#450a0a;color:#fecaca;border-color:#dc2626}
     .suggestion-card {padding:1rem;border-radius:.7rem;background:#0f172a;
       border:1px solid #334155;min-height:12rem}
     .suggestion-symbol {color:#67e8f9;font-size:1.25rem;font-weight:800}
@@ -83,6 +81,8 @@ st.markdown(
     .market-check-levels {margin-top:.15rem;color:#cbd5e1;font-size:.65rem}
     .market-check-levels summary {cursor:pointer;font-weight:800;color:#94a3b8}
     .market-check-levels .market-check-grid {margin-top:.2rem}
+    .live-up {color:#4ade80!important}.live-down {color:#f87171!important}
+    .live-flat {color:#cbd5e1!important}
     @keyframes market-cycle-flash {0%{filter:brightness(2);transform:scale(1.015);
       box-shadow:0 0 22px currentColor}100%{filter:brightness(1);transform:scale(1);
       box-shadow:none}}
@@ -176,7 +176,7 @@ def render_settings_panel():
     interval = str(config.get("interval") or status.get("interval", "15m"))
     if interval not in INTERVAL_OPTIONS:
         interval = "15m"
-    with st.popover("Trading targets and exposure"):
+    with st.expander("Trading targets and exposure", expanded=False):
         st.caption(
             f"Per trade: {float(trade_amount):,.2f} USDT | "
             f"Total exposure: {float(maximum):,.2f} USDT | "
@@ -185,9 +185,7 @@ def render_settings_panel():
             f"Targets: {', '.join(symbols) if symbols else 'not reported yet'}"
         )
         with st.form("runtime_settings"):
-            trade_column, exposure_column, positions_column, interval_column = (
-                st.columns(4)
-            )
+            trade_column, exposure_column = st.columns(2)
             with trade_column:
                 trade_amount_input = st.number_input(
                     "Per-trade amount (USDT)",
@@ -204,6 +202,7 @@ def render_settings_panel():
                     step=1.0,
                     help="Combined original entry value allowed across positions.",
                 )
+            positions_column, interval_column = st.columns(2)
             with positions_column:
                 max_open_positions_input = st.number_input(
                     "Maximum open positions",
@@ -489,23 +488,6 @@ def filter_history(history):
     return filtered
 
 
-def status_tags_html(target_symbols, market_statuses):
-    tags = []
-    for symbol in target_symbols:
-        market_status = market_statuses.get(symbol, "UNKNOWN")
-        if "ERROR" in market_status:
-            style = "status-error"
-        elif market_status in {"MONITORING", "BUY FILLED", "SELL FILLED"}:
-            style = "status-active"
-        else:
-            style = "status-waiting"
-        tags.append(
-            f'<span class="target-tag {style}">{html.escape(symbol)} &middot; '
-            f'{html.escape(market_status)}</span>'
-        )
-    return "".join(tags)
-
-
 def format_market_number(value, decimals=8):
     if value is None:
         return "N/A"
@@ -518,12 +500,19 @@ def format_market_number(value, decimals=8):
 @st.fragment(run_every=5)
 def render_market_check_cards():
     status = read_json(STATUS_FILE, {})
+    live_prices = read_json(LIVE_PRICE_FILE, {})
+    if live_prices.get("environment") != status.get("environment"):
+        live_prices = {}
+    live_markets = live_prices.get("prices", {})
     markets = status.get("markets", {})
     target_symbols = status.get("target_symbols", [])
     updated_at = status.get("updated_at")
+    visual_updated_at = live_prices.get("updated_at") or updated_at
     previous_update = st.session_state.get("market_cards_updated_at")
-    should_flash = updated_at is not None and updated_at != previous_update
-    st.session_state["market_cards_updated_at"] = updated_at
+    should_flash = (
+        visual_updated_at is not None and visual_updated_at != previous_update
+    )
+    st.session_state["market_cards_updated_at"] = visual_updated_at
 
     if not target_symbols:
         return
@@ -539,10 +528,17 @@ def render_market_check_cards():
         trading_mode = (
             "TRADING ACTIVE" if status.get("trading_enabled") else "ANALYSIS ONLY"
         )
+        live_updated_at = live_prices.get("updated_at")
+        live_label = "waiting"
+        if live_updated_at:
+            live_label = datetime.fromtimestamp(live_updated_at).astimezone().strftime(
+                "%H:%M:%S"
+            )
         st.caption(
             f"Latest market check: {checked_at} | "
             f"{str(status.get('environment', 'unknown')).upper()} | "
-            f"{trading_mode} | Candle interval: {status.get('interval', 'N/A')}"
+            f"{trading_mode} | Candle interval: {status.get('interval', 'N/A')} | "
+            f"Live price: {live_label}"
         )
     else:
         st.warning("WAITING FOR BOT STATUS - start app.py to receive market checks.")
@@ -550,6 +546,15 @@ def render_market_check_cards():
     cards = []
     for symbol in target_symbols:
         market = markets.get(symbol, {})
+        live_market = live_markets.get(symbol, {})
+        display_price = live_market.get("price", market.get("price"))
+        direction = str(live_market.get("direction", "FLAT"))
+        direction_icon = {"UP": "&#9650;", "DOWN": "&#9660;"}.get(
+            direction, "&#8226;"
+        )
+        direction_class = {
+            "UP": "live-up", "DOWN": "live-down", "FLAT": "live-flat"
+        }.get(direction, "live-flat")
         market_status = str(
             market.get("status")
             or status.get("market_statuses", {}).get(symbol, "CHECK PENDING")
@@ -574,8 +579,9 @@ def render_market_check_cards():
             f'{html.escape(market_status)}</span></div>'
             f'<div class="market-check-signal">{html.escape(signal)}</div>'
             f'<div class="market-check-grid">'
-            f'<div class="market-check-stat">Price<span>'
-            f'{format_market_number(market.get("price"))}</span></div>'
+            f'<div class="market-check-stat">Price'
+            f'<span class="{direction_class}">{direction_icon} '
+            f'{format_market_number(display_price)}</span></div>'
             f'<div class="market-check-stat">RSI<span>'
             f'{format_market_number(market.get("rsi"), 2)}</span></div></div>'
             f'<details class="market-check-levels"><summary>Levels</summary>'
@@ -630,12 +636,10 @@ def render_top_bar():
                 "Est. P&L (USDT)",
             ].sum()
         )
-    target_symbols = status.get("target_symbols") or config.get("target_symbols", [])
-    tags = status_tags_html(target_symbols, status.get("market_statuses", {}))
     active_interval = str(status.get("interval") or config.get("interval", "15m"))
     tags = (
         f'<span class="target-tag">INTERVAL &middot; '
-        f'{html.escape(active_interval)}</span>{tags}'
+        f'{html.escape(active_interval)}</span>'
     )
     today_class = "pnl-positive" if today_pnl >= 0 else "pnl-negative"
     total_class = "pnl-positive" if total_pnl >= 0 else "pnl-negative"
@@ -680,8 +684,11 @@ def render_dashboard():
         },
     )
     positions = state["positions"]
+    live_prices = read_json(LIVE_PRICE_FILE, {})
+    if live_prices.get("environment") != status.get("environment"):
+        live_prices = {}
+    live_markets = live_prices.get("prices", {})
     history = transaction_frame(read_transactions())
-    render_market_suggestions(status)
 
     st.subheader("Position exit progress")
     if positions:
@@ -694,8 +701,10 @@ def render_dashboard():
                 with column:
                     with st.container(border=True):
                         market = status.get("markets", {}).get(symbol, {})
+                        live_market = live_markets.get(symbol, {})
                         render_position_progress(
-                            symbol, position, market.get("price"),
+                            symbol, position,
+                            live_market.get("price", market.get("price")),
                             bool(status.get("trading_enabled", False)),
                             status.get("environment", state["environment"]),
                         )
@@ -703,6 +712,7 @@ def render_dashboard():
         st.info("No positions are currently tracked.")
 
     render_results_by_symbol(history)
+    render_market_suggestions(status)
 
     st.subheader("Transaction history")
     if history.empty:
@@ -727,5 +737,7 @@ def render_dashboard():
 
 render_top_bar()
 render_market_check_cards()
-render_settings_panel()
 render_dashboard()
+with st.sidebar:
+    st.header("Bot controls")
+    render_settings_panel()

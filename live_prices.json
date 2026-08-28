@@ -1,0 +1,42 @@
+{
+  "environment": "production",
+  "updated_at": 1787937905,
+  "prices": {
+    "PUMPUSDT": {
+      "price": "0.00466300",
+      "previous_price": "0.00466400",
+      "direction": "DOWN",
+      "change_pct": "-0.02144082332761578044596912521"
+    },
+    "SOLUSDT": {
+      "price": "104.74000000",
+      "previous_price": "104.78000000",
+      "direction": "DOWN",
+      "change_pct": "-0.03817522427944264172552013743"
+    },
+    "XRPUSDT": {
+      "price": "1.38940000",
+      "previous_price": "1.38990000",
+      "direction": "DOWN",
+      "change_pct": "-0.03597381106554428376142168501"
+    },
+    "ENAUSDT": {
+      "price": "0.16500000",
+      "previous_price": "0.16510000",
+      "direction": "DOWN",
+      "change_pct": "-0.06056935190793458509993943065"
+    },
+    "USD1USDT": {
+      "price": "0.99984000",
+      "previous_price": "0.99984000",
+      "direction": "FLAT",
+      "change_pct": "0"
+    },
+    "TRXUSDT": {
+      "price": "0.33950000",
+      "previous_price": "0.33960000",
+      "direction": "DOWN",
+      "change_pct": "-0.02944640753828032979976442874"
+    }
+  }
+}

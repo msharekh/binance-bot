@@ -174,6 +174,9 @@ The browser dashboard refreshes every five seconds and displays:
   P&L, and compact symbol/status tags
 - Color-coded market-check cards that flash after each new bot cycle and show
   price, RSI, ATR, support, resistance, signal, suggested SL/TP, and bot status
+- Live card prices and open-position progress refreshed every 10 seconds, with
+  up/down direction indicators; indicator calculations still use the selected
+  completed-candle interval
 - Every currently tracked position and its stop-loss/take-profit levels
 - Available free USDT reported by the running bot
 - Current-price progress between stop loss, entry, and take profit
@@ -198,7 +201,7 @@ The browser dashboard refreshes every five seconds and displays:
 
 ### Change targets and maximum exposure from the dashboard
 
-Open the compact **Trading targets and exposure** popover near the top. It shows
+Open **Trading targets and exposure** under **Bot controls** in the sidebar. It shows
 the current trade amount, maximum total exposure, candle interval, and targeted
 symbols. Enter:
 
