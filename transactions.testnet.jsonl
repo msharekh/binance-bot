@@ -1,0 +1,5 @@
+{"side": "SELL", "symbol": "BTCUSDT", "order_id": 8973124, "quantity": "0.00031000", "price": "80167.02", "quote_amount": "24.85177620", "reason": "stop loss", "estimated_pnl_usdt": "-0.0234174000", "recorded_at": 1787872511}
+{"side": "BUY", "symbol": "BTCUSDT", "order_id": 8973684, "quantity": "0.00031000", "price": "80211.85", "quote_amount": "24.86567350", "reason": "strategy buy signal", "recorded_at": 1787872572}
+{"side": "SELL", "symbol": "BTCUSDT", "order_id": 8976578, "quantity": "0.00031000", "price": "80310", "quote_amount": "24.89610000", "reason": "take profit", "estimated_pnl_usdt": "0.0304265000", "recorded_at": 1787872875}
+{"side": "BUY", "symbol": "BTCUSDT", "order_id": 8977078, "quantity": "0.00031000", "price": "80312.21", "quote_amount": "24.89678510", "reason": "strategy buy signal", "recorded_at": 1787872936}
+{"side": "SELL", "symbol": "BTCUSDT", "order_id": 8978243, "quantity": "0.00031000", "price": "80387.08", "quote_amount": "24.91999480", "reason": "RSI sell signal", "estimated_pnl_usdt": "0.0232097000", "recorded_at": 1787873058}

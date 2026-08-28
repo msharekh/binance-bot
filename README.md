@@ -12,6 +12,8 @@ market orders on Binance Spot Testnet.
 - Sells the tracked position at its stop loss, take profit, or RSI sell signal.
 - Uses a 1:2 risk/reward ratio and a stop distance of 1.5 ATR.
 - Stores the open position in `trade_state.json` to prevent repeated buys.
+- Records filled orders in `transactions.jsonl` and displays them in a local
+  Streamlit dashboard.
 
 The application is intentionally locked to **Binance Spot Testnet**. Testnet
 orders use simulated funds and do not buy or sell real cryptocurrency.
@@ -142,12 +144,26 @@ in the project directory and start the dashboard:
 .\.venv\Scripts\python.exe -m streamlit run dashboard.py
 ```
 
+Streamlit normally opens the dashboard automatically. If it does not, open:
+
+```text
+http://localhost:8501
+```
+
 The browser dashboard refreshes every five seconds and displays:
 
 - The currently tracked position and its stop-loss/take-profit levels
 - Filled testnet buy and sell orders
 - Estimated realized profit or loss before commissions
 - A CSV download of the transaction history
+
+The bot and dashboard have separate roles:
+
+- `app.py` must remain running to analyze the market and execute testnet orders.
+- `dashboard.py` reads the bot's local state and history; it does not place or
+  cancel orders.
+- `trade_state.json` contains the currently tracked open position.
+- `transactions.jsonl` contains the persistent filled-order history.
 
 The bot begins recording transactions after this feature is installed. Orders
 placed before then are not present in `transactions.jsonl` and cannot appear in

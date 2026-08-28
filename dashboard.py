@@ -12,7 +12,7 @@ TRANSACTION_FILE = PROJECT_DIR / "transactions.jsonl"
 
 st.set_page_config(page_title="Binance Bot Dashboard", page_icon="📈", layout="wide")
 st.title("Binance Bot Dashboard")
-st.caption("Binance Spot Testnet · refreshes every 5 seconds")
+st.caption("Binance Spot Production · refreshes every 5 seconds")
 
 
 def read_json(path):
@@ -78,7 +78,7 @@ def render_dashboard():
 
     st.subheader("Transaction history")
     if not transactions:
-        st.info("No filled testnet transactions have been recorded yet.")
+        st.info("No filled production transactions have been recorded yet.")
         return
 
     history = pd.DataFrame(transactions)
@@ -109,7 +109,7 @@ def render_dashboard():
     st.download_button(
         "Download transaction CSV",
         history[display_columns].to_csv(index=False),
-        file_name="binance_testnet_transactions.csv",
+        file_name="binance_pr_transactions.csv",
         mime="text/csv",
     )
 

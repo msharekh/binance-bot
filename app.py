@@ -9,8 +9,8 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 
 
-SYMBOL = "BTCUSDT"
-BASE_ASSET = "BTC"
+SYMBOL = "TRXUSDT"
+BASE_ASSET = "TRX"
 QUOTE_ASSET = "USDT"
 INTERVAL = Client.KLINE_INTERVAL_1MINUTE
 RISK_REWARD_RATIO = 2.0
@@ -19,7 +19,7 @@ TRADE_AMOUNT_USDT = Decimal(os.getenv("TRADE_AMOUNT_USDT", "25"))
 POLL_SECONDS = 60
 
 # Safety: this application only connects to Binance Spot Testnet.
-TESTNET = True
+TESTNET = False
 TRADING_ENABLED = os.getenv("ENABLE_TRADING", "false").lower() == "true"
 STATE_FILE = Path(__file__).with_name("trade_state.json")
 TRANSACTION_FILE = Path(__file__).with_name("transactions.jsonl")
@@ -30,7 +30,7 @@ def create_client():
     api_secret = os.getenv("BINANCE_API_SECRET")
     if not api_key or not api_secret:
         raise RuntimeError(
-            "Set BINANCE_API_KEY and BINANCE_API_SECRET to Spot Testnet credentials."
+            "Set BINANCE_API_KEY and BINANCE_API_SECRET to Spot pr credentials."
         )
     return Client(api_key, api_secret, testnet=TESTNET)
 
@@ -246,7 +246,7 @@ def print_report(analysis):
 
 def main():
     client = create_client()
-    mode = "TESTNET TRADING" if TRADING_ENABLED else "ANALYSIS ONLY"
+    mode = "PRODUCTION TRADING" if TRADING_ENABLED else "ANALYSIS ONLY"
     print(f"Monitoring {SYMBOL} | {mode} | Press Ctrl+C to stop")
     while True:
         try:
@@ -256,7 +256,7 @@ def main():
             if TRADING_ENABLED:
                 decide_and_trade(client, analysis)
             else:
-                print("Trading disabled. Set ENABLE_TRADING=true to place testnet orders.")
+                print("Trading disabled. Set ENABLE_TRADING=true to place production orders.")
             time.sleep(POLL_SECONDS)
         except (BinanceAPIException, BinanceOrderException) as error:
             print(f"Binance error: {error}")
