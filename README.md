@@ -1,7 +1,7 @@
-# Binance BTC/USDT Market Monitor
+# Binance Multi-Market Spot Bot
 
-A small Python command-line application that monitors `BTCUSDT` and can place
-market orders on Binance Spot Testnet.
+A Python command-line application that monitors multiple USDT markets and can
+place market orders on Binance Spot.
 
 ## What it does
 
@@ -11,12 +11,15 @@ market orders on Binance Spot Testnet.
 - Buys a fixed USDT amount when RSI is oversold or price is near support.
 - Sells the tracked position at its stop loss, take profit, or RSI sell signal.
 - Uses a 1:2 risk/reward ratio and a stop distance of 1.5 ATR.
-- Stores the open position in `trade_state.json` to prevent repeated buys.
+- Monitors `BTCUSDT`, `ETHUSDT`, and `TRXUSDT` by default.
+- Tracks one independent open position per symbol in `trade_state.json`.
+- Limits the number of open positions and total USDT entry exposure.
 - Records filled orders in `transactions.jsonl` and displays them in a local
   Streamlit dashboard.
 
-The application is intentionally locked to **Binance Spot Testnet**. Testnet
-orders use simulated funds and do not buy or sell real cryptocurrency.
+The current `TESTNET = False` setting uses **Binance Spot production**. Orders
+are real whenever `ENABLE_TRADING=true`. Keep trading disabled while changing
+or validating configuration.
 
 ## Requirements
 
@@ -24,7 +27,7 @@ orders use simulated funds and do not buy or sell real cryptocurrency.
 - `pandas`
 - `python-binance`
 - `streamlit` for the local transaction dashboard
-- Binance Spot Testnet API credentials
+- Binance Spot production API credentials with Spot trading permission
 
 ## Create the virtual environment
 
@@ -77,30 +80,43 @@ through its Python executable directly:
 .\.venv\Scripts\python.exe -m pip install pandas python-binance streamlit
 ```
 
-## Configure Spot Testnet
+## Configure markets and risk limits
 
-Create API credentials at the Binance Spot Test Network. Testnet credentials
-are different from production Binance credentials. Never put either kind of
-secret directly in `app.py`.
+Never put API credentials directly in `app.py`. Set production credentials in
+the PowerShell session used to run the bot:
 
 Set the credentials in the PowerShell session used to run the bot:
 
 ```powershell
-$env:BINANCE_API_KEY = "your-testnet-api-key"
-$env:BINANCE_API_SECRET = "your-testnet-secret"
+$env:BINANCE_API_KEY = "your-production-api-key"
+$env:BINANCE_API_SECRET = "your-production-secret"
 ```
 
 Trading is disabled by default. The default mode downloads data and prints
-signals without submitting orders. To explicitly enable testnet orders:
+signals without submitting orders. Configure the comma-separated USDT markets:
+
+```powershell
+$env:TRADING_SYMBOLS = "BTCUSDT,ETHUSDT,TRXUSDT"
+```
+
+Each symbol can have at most one tracked position. Configure entry and portfolio
+limits before enabling orders:
+
+```powershell
+$env:TRADE_AMOUNT_USDT = "10"
+$env:MAX_OPEN_POSITIONS = "2"
+$env:MAX_TOTAL_EXPOSURE_USDT = "20"
+```
+
+- `TRADE_AMOUNT_USDT` is the maximum amount spent by one buy.
+- `MAX_OPEN_POSITIONS` is the maximum number of symbols held simultaneously.
+- `MAX_TOTAL_EXPOSURE_USDT` caps the combined original entry values.
+
+The bot currently supports USDT-quoted Spot pairs only. To explicitly enable
+real production orders:
 
 ```powershell
 $env:ENABLE_TRADING = "true"
-```
-
-Each buy spends 25 testnet USDT by default. To choose another amount:
-
-```powershell
-$env:TRADE_AMOUNT_USDT = "50"
 ```
 
 These environment variables last for the current PowerShell session. Avoid
@@ -108,7 +124,7 @@ storing secrets in scripts or committing them to source control.
 
 Other settings near the top of `app.py` control:
 
-- Trading symbol (`BTCUSDT` by default)
+- Trading symbols (`BTCUSDT`, `ETHUSDT`, and `TRXUSDT` by default)
 - Candle interval (one minute by default)
 - Risk/reward ratio
 - ATR stop-loss multiplier
@@ -127,13 +143,14 @@ Alternatively, run it without activation:
 .\.venv\Scripts\python.exe -u app.py
 ```
 
-The program prints a report immediately and refreshes it every 60 seconds.
+The program analyzes every configured market sequentially, prints the reports,
+and starts another cycle every 60 seconds.
 Press `Ctrl+C` to stop it.
 
 The stop loss and take profit are evaluated by this running Python process;
 they are not protective orders stored at Binance. If the program or computer
-stops, those exits cannot execute. Use the Testnet to validate behavior before
-considering any production-trading design.
+stops, those exits cannot execute. Validate changes with trading disabled before
+allowing production orders.
 
 ## Transaction dashboard
 
@@ -152,8 +169,8 @@ http://localhost:8501
 
 The browser dashboard refreshes every five seconds and displays:
 
-- The currently tracked position and its stop-loss/take-profit levels
-- Filled testnet buy and sell orders
+- Every currently tracked position and its stop-loss/take-profit levels
+- Filled production buy and sell orders across all configured symbols
 - Estimated realized profit or loss before commissions
 - A CSV download of the transaction history
 
@@ -162,7 +179,8 @@ The bot and dashboard have separate roles:
 - `app.py` must remain running to analyze the market and execute testnet orders.
 - `dashboard.py` reads the bot's local state and history; it does not place or
   cancel orders.
-- `trade_state.json` contains the currently tracked open position.
+- `trade_state.json` contains positions keyed by trading symbol and records the
+  environment that created them.
 - `transactions.jsonl` contains the persistent filled-order history.
 
 The bot begins recording transactions after this feature is installed. Orders

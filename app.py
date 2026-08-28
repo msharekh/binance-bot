@@ -9,17 +9,28 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 
 
-SYMBOL = "TRXUSDT"
-BASE_ASSET = "TRX"
-QUOTE_ASSET = "USDT"
 INTERVAL = Client.KLINE_INTERVAL_1MINUTE
-RISK_REWARD_RATIO = 2.0
-ATR_SL_MULTIPLIER = 1.5
+RISK_REWARD_RATIO = Decimal("2")
+ATR_SL_MULTIPLIER = Decimal("1.5")
 TRADE_AMOUNT_USDT = Decimal(os.getenv("TRADE_AMOUNT_USDT", "25"))
+MAX_TOTAL_EXPOSURE_USDT = Decimal(os.getenv("MAX_TOTAL_EXPOSURE_USDT", "75"))
+MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
 POLL_SECONDS = 60
 
-# Safety: this application only connects to Binance Spot Testnet.
+# Comma-separated USDT markets, for example: BTCUSDT,ETHUSDT,TRXUSDT
+SYMBOLS = tuple(
+    dict.fromkeys(
+        symbol.strip().upper()
+        for symbol in os.getenv(
+            "TRADING_SYMBOLS", "BTCUSDT,ETHUSDT,TRXUSDT"
+        ).split(",")
+        if symbol.strip()
+    )
+)
+
+# This remains production to preserve the environment selected by the user.
 TESTNET = False
+ENVIRONMENT = "testnet" if TESTNET else "production"
 TRADING_ENABLED = os.getenv("ENABLE_TRADING", "false").lower() == "true"
 STATE_FILE = Path(__file__).with_name("trade_state.json")
 TRANSACTION_FILE = Path(__file__).with_name("transactions.jsonl")
@@ -29,10 +40,8 @@ def create_client():
     api_key = os.getenv("BINANCE_API_KEY")
     api_secret = os.getenv("BINANCE_API_SECRET")
     if not api_key or not api_secret:
-        raise RuntimeError(
-            "Set BINANCE_API_KEY and BINANCE_API_SECRET to Spot pr credentials."
-        )
-    return Client(api_key, api_secret, testnet=TESTNET)
+        raise RuntimeError("Set BINANCE_API_KEY and BINANCE_API_SECRET.")
+    return Client(api_key.strip(), api_secret.strip(), testnet=TESTNET)
 
 
 def calculate_rsi(data, window=14):
@@ -51,8 +60,8 @@ def calculate_atr(data, window=14):
     return true_range.rolling(window=window).mean()
 
 
-def analyze_market(client):
-    klines = client.get_klines(symbol=SYMBOL, interval=INTERVAL, limit=100)
+def analyze_market(client, symbol):
+    klines = client.get_klines(symbol=symbol, interval=INTERVAL, limit=100)
     columns = [
         "time", "open", "high", "low", "close", "volume", "close_time",
         "quote_volume", "trades", "taker_base", "taker_quote", "ignore",
@@ -61,18 +70,17 @@ def analyze_market(client):
     for column in ["open", "high", "low", "close", "volume"]:
         data[column] = data[column].astype(float)
 
-    # A completed candle avoids placing orders from a still-changing signal.
     completed = data.iloc[:-1]
     entry_price = completed["close"].iloc[-1]
     rsi = calculate_rsi(completed).iloc[-1]
     atr = calculate_atr(completed).iloc[-1]
     support = completed["low"].tail(20).min()
     resistance = completed["high"].tail(20).max()
-    stop_distance = atr * ATR_SL_MULTIPLIER
+    stop_distance = atr * float(ATR_SL_MULTIPLIER)
     return {
         "entry": entry_price,
         "sl": entry_price - stop_distance,
-        "tp": entry_price + stop_distance * RISK_REWARD_RATIO,
+        "tp": entry_price + stop_distance * float(RISK_REWARD_RATIO),
         "rsi": rsi,
         "atr": atr,
         "support": support,
@@ -81,26 +89,35 @@ def analyze_market(client):
     }
 
 
-def load_position():
+def load_positions():
     if not STATE_FILE.exists():
-        return None
+        return {}
     with STATE_FILE.open("r", encoding="utf-8") as state_file:
-        return json.load(state_file)
+        state = json.load(state_file)
+
+    if "positions" not in state:
+        raise RuntimeError(
+            "Legacy trade_state.json detected. Archive it or convert it before "
+            "running the multi-market bot."
+        )
+    saved_environment = state.get("environment")
+    if saved_environment != ENVIRONMENT:
+        raise RuntimeError(
+            f"State belongs to {saved_environment}, but the bot is using {ENVIRONMENT}."
+        )
+    return state["positions"]
 
 
-def save_position(position):
+def save_positions(positions):
     temporary_file = STATE_FILE.with_suffix(".tmp")
+    state = {"environment": ENVIRONMENT, "positions": positions}
     with temporary_file.open("w", encoding="utf-8") as state_file:
-        json.dump(position, state_file, indent=2)
+        json.dump(state, state_file, indent=2)
     temporary_file.replace(STATE_FILE)
 
 
-def clear_position():
-    if STATE_FILE.exists():
-        STATE_FILE.unlink()
-
-
 def record_transaction(transaction):
+    transaction["environment"] = ENVIRONMENT
     transaction["recorded_at"] = int(time.time())
     with TRANSACTION_FILE.open("a", encoding="utf-8") as history_file:
         history_file.write(json.dumps(transaction) + "\n")
@@ -111,125 +128,153 @@ def get_free_balance(client, asset):
     return Decimal(balance["free"]) if balance else Decimal("0")
 
 
-def get_step_size(client):
-    symbol_info = client.get_symbol_info(SYMBOL)
+def get_market_rules(client, symbol):
+    symbol_info = client.get_symbol_info(symbol)
     if not symbol_info:
-        raise RuntimeError(f"Could not load exchange rules for {SYMBOL}.")
-    lot_size = next(
-        item for item in symbol_info["filters"] if item["filterType"] == "LOT_SIZE"
-    )
-    return Decimal(lot_size["stepSize"]), Decimal(lot_size["minQty"])
+        raise RuntimeError(f"Could not load exchange rules for {symbol}.")
+    if symbol_info["status"] != "TRADING":
+        raise RuntimeError(f"{symbol} is not currently open for trading.")
+    if symbol_info["quoteAsset"] != "USDT":
+        raise RuntimeError(f"{symbol} must use USDT as its quote asset.")
+
+    filters = {item["filterType"]: item for item in symbol_info["filters"]}
+    lot_size = filters["LOT_SIZE"]
+    notional = filters.get("NOTIONAL") or filters.get("MIN_NOTIONAL") or {}
+    return {
+        "base_asset": symbol_info["baseAsset"],
+        "quote_asset": symbol_info["quoteAsset"],
+        "step_size": Decimal(lot_size["stepSize"]),
+        "min_quantity": Decimal(lot_size["minQty"]),
+        "min_notional": Decimal(notional.get("minNotional", "0")),
+    }
 
 
 def round_to_step(quantity, step_size):
     return (quantity / step_size).to_integral_value(rounding=ROUND_DOWN) * step_size
 
 
-def buy(client, analysis):
-    available_usdt = get_free_balance(client, QUOTE_ASSET)
-    amount = min(TRADE_AMOUNT_USDT, available_usdt)
-    if amount <= 0:
-        print("BUY skipped: no free USDT balance.")
+def current_exposure(positions):
+    return sum(
+        (Decimal(position["entry"]) * Decimal(position["quantity"]) for position in positions.values()),
+        Decimal("0"),
+    )
+
+
+def buy(client, symbol, rules, analysis, positions):
+    if symbol in positions:
+        return None
+    if len(positions) >= MAX_OPEN_POSITIONS:
+        print(f"{symbol} BUY skipped: maximum open positions reached.")
+        return None
+
+    remaining_exposure = MAX_TOTAL_EXPOSURE_USDT - current_exposure(positions)
+    available_usdt = get_free_balance(client, rules["quote_asset"])
+    amount = min(TRADE_AMOUNT_USDT, remaining_exposure, available_usdt)
+    if amount < rules["min_notional"] or amount <= 0:
+        print(f"{symbol} BUY skipped: insufficient balance or exposure allowance.")
         return None
 
     order = client.create_order(
-        symbol=SYMBOL,
+        symbol=symbol,
         side=Client.SIDE_BUY,
         type=Client.ORDER_TYPE_MARKET,
-        quoteOrderQty=str(amount),
+        quoteOrderQty=format(amount, "f"),
         newOrderRespType="FULL",
     )
     executed_quantity = Decimal(order["executedQty"])
     quote_spent = Decimal(order["cummulativeQuoteQty"])
     average_price = quote_spent / executed_quantity
-    stop_distance = Decimal(str(analysis["atr"] * ATR_SL_MULTIPLIER))
+    stop_distance = Decimal(str(analysis["atr"])) * ATR_SL_MULTIPLIER
     position = {
+        "symbol": symbol,
+        "base_asset": rules["base_asset"],
+        "quote_asset": rules["quote_asset"],
         "order_id": order["orderId"],
         "quantity": str(executed_quantity),
         "entry": str(average_price),
         "stop_loss": str(average_price - stop_distance),
-        "take_profit": str(
-            average_price + stop_distance * Decimal(str(RISK_REWARD_RATIO))
-        ),
+        "take_profit": str(average_price + stop_distance * RISK_REWARD_RATIO),
         "opened_at": int(time.time()),
     }
-    save_position(position)
+    positions[symbol] = position
+    save_positions(positions)
     record_transaction(
         {
-            "side": "BUY",
-            "symbol": SYMBOL,
-            "order_id": order["orderId"],
-            "quantity": str(executed_quantity),
-            "price": str(average_price),
-            "quote_amount": str(quote_spent),
+            "side": "BUY", "symbol": symbol, "order_id": order["orderId"],
+            "quantity": str(executed_quantity), "price": str(average_price),
+            "quote_amount": str(quote_spent), "quote_asset": rules["quote_asset"],
             "reason": "strategy buy signal",
         }
     )
-    print(f"BUY filled: {executed_quantity} {BASE_ASSET} at about {average_price:.2f}")
+    print(
+        f"{symbol} BUY filled: {executed_quantity} {rules['base_asset']} "
+        f"at about {average_price:.8f}"
+    )
     return position
 
 
-def sell(client, position, reason):
-    step_size, minimum_quantity = get_step_size(client)
+def sell(client, symbol, rules, position, analysis, positions, reason):
     tracked_quantity = Decimal(position["quantity"])
-    available_quantity = get_free_balance(client, BASE_ASSET)
-    quantity = round_to_step(min(tracked_quantity, available_quantity), step_size)
-    if quantity < minimum_quantity:
-        print(f"SELL skipped: available {BASE_ASSET} is below the minimum quantity.")
+    available_quantity = get_free_balance(client, rules["base_asset"])
+    quantity = round_to_step(
+        min(tracked_quantity, available_quantity), rules["step_size"]
+    )
+    notional = quantity * Decimal(str(analysis["entry"]))
+    if quantity < rules["min_quantity"] or notional < rules["min_notional"]:
+        print(
+            f"{symbol} SELL skipped: free {rules['base_asset']} is below "
+            "the exchange minimum."
+        )
         return None
 
     order = client.create_order(
-        symbol=SYMBOL,
+        symbol=symbol,
         side=Client.SIDE_SELL,
         type=Client.ORDER_TYPE_MARKET,
         quantity=format(quantity, "f"),
         newOrderRespType="FULL",
     )
+    executed_quantity = Decimal(order["executedQty"])
     quote_received = Decimal(order["cummulativeQuoteQty"])
-    average_price = quote_received / Decimal(order["executedQty"])
+    average_price = quote_received / executed_quantity
     entry_price = Decimal(position["entry"])
-    estimated_pnl = (average_price - entry_price) * quantity
+    estimated_pnl = (average_price - entry_price) * executed_quantity
     record_transaction(
         {
-            "side": "SELL",
-            "symbol": SYMBOL,
-            "order_id": order["orderId"],
-            "quantity": str(quantity),
-            "price": str(average_price),
-            "quote_amount": str(quote_received),
-            "reason": reason,
-            "estimated_pnl_usdt": str(estimated_pnl),
+            "side": "SELL", "symbol": symbol, "order_id": order["orderId"],
+            "quantity": str(executed_quantity), "price": str(average_price),
+            "quote_amount": str(quote_received), "quote_asset": rules["quote_asset"],
+            "reason": reason, "estimated_pnl_usdt": str(estimated_pnl),
         }
     )
-    clear_position()
-    print(f"SELL filled: {quantity} {BASE_ASSET}. Reason: {reason}")
+    positions.pop(symbol, None)
+    save_positions(positions)
+    print(f"{symbol} SELL filled: {executed_quantity}. Reason: {reason}")
     return order
 
 
-def decide_and_trade(client, analysis):
-    position = load_position()
+def decide_and_trade(client, symbol, rules, analysis, positions):
+    position = positions.get(symbol)
     price = Decimal(str(analysis["entry"]))
     if position:
         if price <= Decimal(position["stop_loss"]):
-            sell(client, position, "stop loss")
+            sell(client, symbol, rules, position, analysis, positions, "stop loss")
         elif price >= Decimal(position["take_profit"]):
-            sell(client, position, "take profit")
+            sell(client, symbol, rules, position, analysis, positions, "take profit")
         elif analysis["rsi"] >= 65:
-            sell(client, position, "RSI sell signal")
+            sell(client, symbol, rules, position, analysis, positions, "RSI sell signal")
         else:
-            print("HOLD: an open position is being monitored.")
+            print(f"{symbol} HOLD: open position is being monitored.")
         return
 
-    buy_signal = (
-        analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2
-    )
+    buy_signal = analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2
     if buy_signal:
-        buy(client, analysis)
+        buy(client, symbol, rules, analysis, positions)
     else:
-        print("NO TRADE: waiting for a buy signal.")
+        print(f"{symbol} NO TRADE: waiting for a buy signal.")
 
 
-def print_report(analysis):
+def print_report(symbol, analysis):
     if analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2:
         verdict = "BUY SIGNAL"
     elif analysis["rsi"] >= 65:
@@ -237,36 +282,49 @@ def print_report(analysis):
     else:
         verdict = "NEUTRAL"
     print("=" * 72)
-    print(f"{SYMBOL} | Price: {analysis['entry']:.2f} | RSI: {analysis['rsi']:.2f}")
-    print(f"ATR: {analysis['atr']:.2f} | Support: {analysis['support']:.2f}")
-    print(f"Resistance: {analysis['resistance']:.2f} | Signal: {verdict}")
-    print(f"Suggested SL: {analysis['sl']:.2f} | Suggested TP: {analysis['tp']:.2f}")
+    print(f"{symbol} | Price: {analysis['entry']:.8f} | RSI: {analysis['rsi']:.2f}")
+    print(f"ATR: {analysis['atr']:.8f} | Support: {analysis['support']:.8f}")
+    print(f"Resistance: {analysis['resistance']:.8f} | Signal: {verdict}")
+    print(f"Suggested SL: {analysis['sl']:.8f} | Suggested TP: {analysis['tp']:.8f}")
     print("=" * 72)
 
 
 def main():
+    if not SYMBOLS:
+        raise RuntimeError("TRADING_SYMBOLS must contain at least one symbol.")
     client = create_client()
-    mode = "PRODUCTION TRADING" if TRADING_ENABLED else "ANALYSIS ONLY"
-    print(f"Monitoring {SYMBOL} | {mode} | Press Ctrl+C to stop")
+    positions = load_positions()
+    rules_by_symbol = {symbol: get_market_rules(client, symbol) for symbol in SYMBOLS}
+    unknown_positions = set(positions) - set(SYMBOLS)
+    if unknown_positions:
+        raise RuntimeError(
+            "Open state exists for symbols missing from TRADING_SYMBOLS: "
+            + ", ".join(sorted(unknown_positions))
+        )
+
+    mode = f"{ENVIRONMENT.upper()} TRADING" if TRADING_ENABLED else "ANALYSIS ONLY"
+    print(f"Monitoring {', '.join(SYMBOLS)} | {mode} | Press Ctrl+C to stop")
     while True:
         try:
-            analysis = analyze_market(client)
             print(time.strftime("%Y-%m-%d %H:%M:%S"))
-            print_report(analysis)
-            if TRADING_ENABLED:
-                decide_and_trade(client, analysis)
-            else:
-                print("Trading disabled. Set ENABLE_TRADING=true to place production orders.")
+            for symbol in SYMBOLS:
+                try:
+                    analysis = analyze_market(client, symbol)
+                    print_report(symbol, analysis)
+                    if TRADING_ENABLED:
+                        decide_and_trade(
+                            client, symbol, rules_by_symbol[symbol], analysis, positions
+                        )
+                    else:
+                        print(f"{symbol}: trading disabled.")
+                except (BinanceAPIException, BinanceOrderException) as error:
+                    print(f"{symbol} Binance error: {error}")
+                except Exception as error:
+                    print(f"{symbol} error: {error}")
             time.sleep(POLL_SECONDS)
-        except (BinanceAPIException, BinanceOrderException) as error:
-            print(f"Binance error: {error}")
-            time.sleep(10)
         except KeyboardInterrupt:
             print("\nStopped.")
             break
-        except Exception as error:
-            print(f"Error: {error}")
-            time.sleep(10)
 
 
 if __name__ == "__main__":
