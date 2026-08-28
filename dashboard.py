@@ -39,6 +39,14 @@ st.markdown(
     .result-stat {color:#e2e8f0;font-weight:650;margin-top:.18rem}
     .result-positive {color:#4ade80;font-size:1.1rem;font-weight:800}
     .result-negative {color:#f87171;font-size:1.1rem;font-weight:800}
+    .position-symbol {color:#38bdf8;font-size:1.15rem;font-weight:900;letter-spacing:.03em}
+    .position-quantity {color:#94a3b8;font-size:.78rem}
+    .position-pnl {font-size:1.05rem;font-weight:900;text-align:right}
+    .position-stats {display:grid;grid-template-columns:repeat(2,1fr);gap:.3rem;
+      margin-top:.15rem}
+    .position-stat {padding:.3rem .4rem;border-radius:.35rem;background:#0f172a}
+    .position-label {color:#94a3b8;font-size:.67rem;text-transform:uppercase;font-weight:700}
+    .position-value {color:#e2e8f0;font-size:.83rem;font-weight:750}
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
       margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
@@ -209,27 +217,33 @@ def render_position_progress(
     span = take_profit - stop_loss
     progress = (current - stop_loss) / span if span > 0 else 0.5
     progress = max(0.0, min(1.0, progress))
-    entry_progress = (entry - stop_loss) / span if span > 0 else 0.5
-
     quantity = float(position["quantity"])
+    entry_value = quantity * entry
+    current_value = quantity * current
+    take_profit_value = quantity * take_profit
+    stop_loss_value = quantity * stop_loss
     unrealized_pnl = (current - entry) * quantity
     unrealized_pct = ((current - entry) / entry) * 100 if entry else 0
+    pnl_style = "pnl-positive" if unrealized_pnl >= 0 else "pnl-negative"
+    if current >= entry:
+        distance_label = "To TP"
+        distance = max(((take_profit - current) / current) * 100, 0)
+    else:
+        distance_label = "To SL"
+        distance = max(((current - stop_loss) / current) * 100, 0)
 
-    st.markdown(
-        f'<span class="symbol-title">{html.escape(symbol)}</span>',
-        unsafe_allow_html=True,
-    )
-    progress_column, profit_column, action_column = st.columns([4, 1, 1])
-    with progress_column:
-        st.progress(
-            progress,
-            text=f"SL {stop_loss:.8f}  ←  Entry {entry:.8f}  →  TP {take_profit:.8f}",
+    symbol_column, profit_column, action_column = st.columns([2, 2, 1])
+    with symbol_column:
+        st.markdown(
+            f'<div class="position-symbol">{html.escape(symbol)}</div>'
+            f'<div class="position-quantity">Quantity: {quantity:.8f}</div>',
+            unsafe_allow_html=True,
         )
     with profit_column:
-        st.metric(
-            "Current P&L",
-            f"{unrealized_pnl:+,.4f} USDT",
-            f"{unrealized_pct:+.2f}%",
+        st.markdown(
+            f'<div class="position-pnl {pnl_style}">{unrealized_pnl:+,.4f} USDT'
+            f'<br><small>{unrealized_pct:+.2f}%</small></div>',
+            unsafe_allow_html=True,
         )
     with action_column:
         with st.popover("Sell now"):
@@ -249,15 +263,22 @@ def render_position_progress(
             if confirmed:
                 queue_sell_request(symbol, environment)
                 st.success("Sell request queued. It expires in 30 seconds.")
-    current_column, entry_column, distance_column = st.columns(3)
-    current_column.metric("Current price", f"{current:.8f}")
-    entry_column.metric("Entry marker", f"{entry_progress * 100:.1f}% of range")
-    if current >= entry:
-        distance = ((take_profit - current) / current) * 100
-        distance_column.metric("Distance to TP", f"{max(distance, 0):.2f}%")
-    else:
-        distance = ((current - stop_loss) / current) * 100
-        distance_column.metric("Distance to SL", f"{max(distance, 0):.2f}%")
+    st.progress(
+        progress,
+        text=f"SL {stop_loss:.8f}  ←  Entry {entry:.8f}  →  TP {take_profit:.8f}",
+    )
+    st.markdown(
+        f"""
+        <div class="position-stats">
+          <div class="position-stat"><div class="position-label">Entry / Spent</div><div class="position-value">Price {entry:.8f}<br>{entry_value:,.4f} USDT</div></div>
+          <div class="position-stat"><div class="position-label">Current / Value</div><div class="position-value">Price {current:.8f}<br>{current_value:,.4f} USDT</div></div>
+          <div class="position-stat"><div class="position-label">Take Profit / Est. Value</div><div class="position-value">Price {take_profit:.8f}<br>{take_profit_value:,.4f} USDT</div></div>
+          <div class="position-stat"><div class="position-label">Stop Loss / Est. Value</div><div class="position-value">Price {stop_loss:.8f}<br>{stop_loss_value:,.4f} USDT</div></div>
+        </div>
+        <div class="position-quantity">Gross estimates before fees &middot; {distance_label}: {distance:.2f}%</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_market_suggestions(status):
@@ -455,13 +476,20 @@ def render_dashboard():
 
     st.subheader("Position exit progress")
     if positions:
-        for symbol, position in positions.items():
-            market = status.get("markets", {}).get(symbol, {})
-            render_position_progress(
-                symbol, position, market.get("price"),
-                bool(status.get("trading_enabled", False)),
-                status.get("environment", state["environment"]),
-            )
+        position_items = list(positions.items())
+        for start in range(0, len(position_items), 2):
+            columns = st.columns(2, gap="small")
+            for column, (symbol, position) in zip(
+                columns, position_items[start : start + 2]
+            ):
+                with column:
+                    with st.container(border=True):
+                        market = status.get("markets", {}).get(symbol, {})
+                        render_position_progress(
+                            symbol, position, market.get("price"),
+                            bool(status.get("trading_enabled", False)),
+                            status.get("environment", state["environment"]),
+                        )
     else:
         st.info("No positions are currently tracked.")
 

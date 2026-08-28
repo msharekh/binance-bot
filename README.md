@@ -177,6 +177,11 @@ The browser dashboard refreshes every five seconds and displays:
 - Current-price progress between stop loss, entry, and take profit
 - Live unrealized USDT profit and percentage beside each open position
 - A confirmed **Sell now** control beside each open-position progress bar
+- Compact bordered open-position cards shown two per row, so each transaction is
+  visually separated while current price, entry, exit distance, P&L, and actions
+  remain easy to scan
+- Every open-position card shows unit price and corresponding gross USDT position
+  value at entry, current price, take profit, and stop loss
 - Header tags for every targeted symbol and its latest short bot status, such as
   `WAITING TO BUY`, `MONITORING`, or `BUY FILLED`
 - Six read-only Binance Spot watchlist candidates with current price, 24-hour
