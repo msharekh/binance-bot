@@ -170,8 +170,8 @@ http://localhost:8501
 The browser dashboard refreshes every five seconds and displays:
 
 - A sticky top summary bar with available USDT, open-position count, maximum
-  allowed exposure, today's realized P&L, total realized P&L, and compact
-  symbol/status tags
+  per-trade amount, maximum total exposure, today's realized P&L, total realized
+  P&L, and compact symbol/status tags
 - Every currently tracked position and its stop-loss/take-profit levels
 - Available free USDT reported by the running bot
 - Current-price progress between stop loss, entry, and take profit
@@ -199,14 +199,21 @@ The browser dashboard refreshes every five seconds and displays:
 Open the compact **Trading targets and exposure** popover near the top. It shows
 the current maximum total exposure and targeted symbols. Enter:
 
+- A per-trade maximum amount in USDT
 - A maximum combined entry exposure in USDT
 - Comma-separated Binance USDT Spot symbols such as
   `BTCUSDT,ETHUSDT,SOLUSDT`
+- Optionally enable **Hold new buys** to pause new entries
 
 Select **Save and confirm settings**. The settings are written to
 `bot_config.json`, and the running bot loads them at the start of its next
 analysis cycle. The dashboard refuses to remove a symbol that has an open
 position, so the bot can continue monitoring its exit.
+
+When **Hold new buys** is enabled, the dashboard shows a prominent orange hold
+banner. Existing positions remain monitored: stop-loss, take-profit, RSI exits,
+and confirmed manual sells continue to work. Disable the toggle and save again
+to resume new entries.
 
 The bot validates new symbols against Binance before analyzing or trading them.
 An invalid or unavailable pair is reported as an error and does not prevent

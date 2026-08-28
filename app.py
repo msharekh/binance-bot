@@ -76,6 +76,8 @@ def load_runtime_config():
     config = {
         "target_symbols": list(DEFAULT_SYMBOLS),
         "max_total_exposure_usdt": DEFAULT_MAX_TOTAL_EXPOSURE_USDT,
+        "trade_amount_usdt": TRADE_AMOUNT_USDT,
+        "trading_on_hold": False,
     }
     if not CONFIG_FILE.exists():
         return config
@@ -90,12 +92,22 @@ def load_runtime_config():
             )
         )
         maximum_exposure = Decimal(str(saved["max_total_exposure_usdt"]))
+        trade_amount = Decimal(
+            str(saved.get("trade_amount_usdt", TRADE_AMOUNT_USDT))
+        )
+        trading_on_hold = bool(saved.get("trading_on_hold", False))
         if not symbols:
             raise ValueError("At least one target symbol is required.")
         if maximum_exposure <= 0:
             raise ValueError("Maximum exposure must be greater than zero.")
+        if trade_amount <= 0:
+            raise ValueError("Per-trade amount must be greater than zero.")
+        if trade_amount > maximum_exposure:
+            raise ValueError("Per-trade amount cannot exceed maximum exposure.")
         config["target_symbols"] = list(symbols)
         config["max_total_exposure_usdt"] = maximum_exposure
+        config["trade_amount_usdt"] = trade_amount
+        config["trading_on_hold"] = trading_on_hold
         return config
     except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError) as error:
         print(f"Ignoring invalid bot_config.json: {error}")
@@ -176,13 +188,15 @@ def save_positions(positions):
 
 def save_status(
     available_usdt, analyses, market_statuses, target_symbols, maximum_exposure,
-    suggestions,
+    trade_amount, trading_on_hold, suggestions,
 ):
     temporary_file = STATUS_FILE.with_suffix(".tmp")
     status = {
         "environment": ENVIRONMENT,
         "updated_at": int(time.time()),
         "available_usdt": str(available_usdt),
+        "trade_amount_usdt": str(trade_amount),
+        "trading_on_hold": trading_on_hold,
         "target_symbols": list(target_symbols),
         "max_total_exposure_usdt": str(maximum_exposure),
         "market_statuses": market_statuses,
@@ -295,7 +309,9 @@ def current_exposure(positions):
     )
 
 
-def buy(client, symbol, rules, analysis, positions, maximum_exposure):
+def buy(
+    client, symbol, rules, analysis, positions, maximum_exposure, trade_amount
+):
     if symbol in positions:
         return None
     if len(positions) >= MAX_OPEN_POSITIONS:
@@ -304,7 +320,7 @@ def buy(client, symbol, rules, analysis, positions, maximum_exposure):
 
     remaining_exposure = maximum_exposure - current_exposure(positions)
     available_usdt = get_free_balance(client, rules["quote_asset"])
-    amount = min(TRADE_AMOUNT_USDT, remaining_exposure, available_usdt)
+    amount = min(trade_amount, remaining_exposure, available_usdt)
     if amount < rules["min_notional"] or amount <= 0:
         print(f"{symbol} BUY skipped: insufficient balance or exposure allowance.")
         return None
@@ -467,7 +483,8 @@ def wait_for_next_cycle(client, positions, rules_by_symbol):
 
 
 def decide_and_trade(
-    client, symbol, rules, analysis, positions, maximum_exposure
+    client, symbol, rules, analysis, positions, maximum_exposure, trade_amount,
+    trading_on_hold,
 ):
     position = positions.get(symbol)
     price = Decimal(str(analysis["entry"]))
@@ -487,10 +504,15 @@ def decide_and_trade(
             print(f"{symbol} HOLD: open position is being monitored.")
             return "MONITORING"
 
+    if trading_on_hold:
+        print(f"{symbol} ON HOLD: new buys are paused.")
+        return "ON HOLD"
+
     buy_signal = analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2
     if buy_signal:
         position = buy(
-            client, symbol, rules, analysis, positions, maximum_exposure
+            client, symbol, rules, analysis, positions, maximum_exposure,
+            trade_amount,
         )
         return "BUY FILLED" if position else "BUY SKIPPED"
     else:
@@ -529,6 +551,8 @@ def main():
             runtime_config = load_runtime_config()
             target_symbols = runtime_config["target_symbols"]
             maximum_exposure = runtime_config["max_total_exposure_usdt"]
+            trade_amount = runtime_config["trade_amount_usdt"]
+            trading_on_hold = runtime_config["trading_on_hold"]
             # An open position is always monitored even if removed from targets.
             active_symbols = list(
                 dict.fromkeys(target_symbols + list(positions.keys()))
@@ -542,7 +566,9 @@ def main():
             print(time.strftime("%Y-%m-%d %H:%M:%S"))
             print(
                 f"Targets: {', '.join(target_symbols)} | "
-                f"Max exposure: {maximum_exposure} USDT"
+                f"Trade amount: {trade_amount} USDT | "
+                f"Max exposure: {maximum_exposure} USDT | "
+                f"New buys: {'ON HOLD' if trading_on_hold else 'ACTIVE'}"
             )
             analyses = {}
             market_statuses = {}
@@ -556,7 +582,7 @@ def main():
                     if TRADING_ENABLED:
                         market_statuses[symbol] = decide_and_trade(
                             client, symbol, rules_by_symbol[symbol], analysis, positions,
-                            maximum_exposure,
+                            maximum_exposure, trade_amount, trading_on_hold,
                         )
                     else:
                         print(f"{symbol}: trading disabled.")
@@ -570,7 +596,8 @@ def main():
             try:
                 save_status(
                     get_free_balance(client, "USDT"), analyses, market_statuses,
-                    target_symbols, maximum_exposure, suggestions,
+                    target_symbols, maximum_exposure, trade_amount,
+                    trading_on_hold, suggestions,
                 )
             except (BinanceAPIException, BinanceOrderException) as error:
                 print(f"Could not update account status: {error}")

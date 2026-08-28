@@ -50,11 +50,14 @@ st.markdown(
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
       margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
-    .summary-grid {display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:.45rem}
+    .summary-grid {display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:.45rem}
     .summary-item {padding:.42rem .55rem;border-radius:.5rem;background:#0f172a}
     .summary-label {color:#cbd5e1;font-size:.9rem;text-transform:uppercase;font-weight:800}
     .summary-value {color:#f8fafc;font-size:1.5rem;font-weight:900;line-height:1.2}
     .summary-tags {margin-top:.45rem}.pnl-positive{color:#4ade80}.pnl-negative{color:#f87171}
+    .hold-banner {padding:.55rem .75rem;margin-bottom:.5rem;border-radius:.5rem;
+      background:#7c2d12;color:#ffedd5;border:1px solid #f97316;
+      font-size:1.05rem;font-weight:900;text-align:center;letter-spacing:.04em}
     @media(max-width:900px){.summary-grid{grid-template-columns:repeat(2,1fr)}}
     </style>
     """,
@@ -93,11 +96,13 @@ def read_transactions():
     return transactions
 
 
-def write_config(symbols, maximum_exposure):
+def write_config(symbols, maximum_exposure, trade_amount, trading_on_hold):
     temporary_file = CONFIG_FILE.with_suffix(".tmp")
     config = {
         "target_symbols": symbols,
         "max_total_exposure_usdt": str(maximum_exposure),
+        "trade_amount_usdt": str(trade_amount),
+        "trading_on_hold": trading_on_hold,
         "updated_at": int(datetime.now().timestamp()),
     }
     temporary_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
@@ -124,25 +129,46 @@ def render_settings_panel():
     maximum = config.get("max_total_exposure_usdt") or status.get(
         "max_total_exposure_usdt", "75"
     )
-
+    trade_amount = config.get("trade_amount_usdt") or status.get(
+        "trade_amount_usdt", "25"
+    )
+    trading_on_hold = bool(
+        config.get("trading_on_hold", status.get("trading_on_hold", False))
+    )
     with st.popover("Trading targets and exposure"):
         st.caption(
-            f"Current maximum total exposure: {float(maximum):,.2f} USDT · "
+            f"Per trade: {float(trade_amount):,.2f} USDT | "
+            f"Total exposure: {float(maximum):,.2f} USDT | "
             f"Targets: {', '.join(symbols) if symbols else 'not reported yet'}"
         )
         with st.form("runtime_settings"):
-            maximum_input = st.number_input(
-                "Maximum total exposure (USDT)",
-                min_value=1.0,
-                value=float(maximum),
-                step=1.0,
-                help="Combined original entry value allowed across open positions.",
-            )
+            trade_column, exposure_column = st.columns(2)
+            with trade_column:
+                trade_amount_input = st.number_input(
+                    "Per-trade amount (USDT)",
+                    min_value=1.0,
+                    value=float(trade_amount),
+                    step=1.0,
+                    help="Maximum USDT requested for one new buy.",
+                )
+            with exposure_column:
+                maximum_input = st.number_input(
+                    "Maximum total exposure (USDT)",
+                    min_value=1.0,
+                    value=float(maximum),
+                    step=1.0,
+                    help="Combined original entry value allowed across positions.",
+                )
             symbols_input = st.text_input(
                 "Targeted Spot symbols",
                 value=",".join(symbols),
                 placeholder="BTCUSDT,ETHUSDT,SOLUSDT",
                 help="Enter comma-separated Binance USDT Spot symbols.",
+            )
+            hold_input = st.toggle(
+                "Hold new buys",
+                value=trading_on_hold,
+                help="Existing positions remain monitored and can still be sold.",
             )
             confirmed = st.form_submit_button(
                 "Save and confirm settings", type="primary", use_container_width=True
@@ -172,8 +198,12 @@ def render_settings_panel():
                     "Keep symbols with open positions: "
                     + ", ".join(sorted(removed_open_symbols))
                 )
+            elif trade_amount_input > maximum_input:
+                st.error("Per-trade amount cannot exceed maximum total exposure.")
             else:
-                write_config(parsed_symbols, maximum_input)
+                write_config(
+                    parsed_symbols, maximum_input, trade_amount_input, hold_input
+                )
                 st.success(
                     "Settings saved. The bot will load them at the next analysis cycle."
                 )
@@ -426,6 +456,12 @@ def render_top_bar():
     maximum = config.get("max_total_exposure_usdt") or status.get(
         "max_total_exposure_usdt", "75"
     )
+    trade_amount = config.get("trade_amount_usdt") or status.get(
+        "trade_amount_usdt"
+    )
+    trading_on_hold = bool(
+        config.get("trading_on_hold", status.get("trading_on_hold", False))
+    )
     total_pnl = 0.0
     today_pnl = 0.0
     if not history.empty:
@@ -442,13 +478,24 @@ def render_top_bar():
     today_class = "pnl-positive" if today_pnl >= 0 else "pnl-negative"
     total_class = "pnl-positive" if total_pnl >= 0 else "pnl-negative"
     available_text = f"{float(available):,.2f}" if available is not None else "N/A"
+    trade_amount_text = (
+        f"{float(trade_amount):,.2f}" if trade_amount is not None else "N/A"
+    )
+    hold_banner = (
+        '<div class="hold-banner">TRADING ON HOLD &mdash; NEW BUYS PAUSED; '
+        'EXISTING POSITIONS STILL MONITORED</div>'
+        if trading_on_hold
+        else ""
+    )
     st.markdown(
         f"""
         <div class="sticky-summary">
+          {hold_banner}
           <div class="summary-grid">
             <div class="summary-item"><div class="summary-label">Available USDT</div><div class="summary-value">{available_text}</div></div>
             <div class="summary-item"><div class="summary-label">Open positions</div><div class="summary-value">{len(positions)}</div></div>
-            <div class="summary-item"><div class="summary-label">Max allowed USDT</div><div class="summary-value">{float(maximum):,.2f}</div></div>
+            <div class="summary-item"><div class="summary-label">Per-trade max</div><div class="summary-value">{trade_amount_text}</div></div>
+            <div class="summary-item"><div class="summary-label">Max total exposure</div><div class="summary-value">{float(maximum):,.2f}</div></div>
             <div class="summary-item"><div class="summary-label">Today realized P&amp;L</div><div class="summary-value {today_class}">{today_pnl:+,.4f}</div></div>
             <div class="summary-item"><div class="summary-label">Total realized P&amp;L</div><div class="summary-value {total_class}">{total_pnl:+,.4f}</div></div>
           </div>
