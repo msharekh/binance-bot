@@ -12,6 +12,10 @@ from binance.exceptions import BinanceAPIException, BinanceOrderException
 
 # INTERVAL = Client.KLINE_INTERVAL_1MINUTE
 INTERVAL = Client.KLINE_INTERVAL_15MINUTE
+SUPPORTED_INTERVALS = {
+    "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h",
+    "12h", "1d", "3d", "1w", "1M",
+}
 RISK_REWARD_RATIO = Decimal("2")
 ATR_SL_MULTIPLIER = Decimal("1.5")
 TRADE_AMOUNT_USDT = Decimal(os.getenv("TRADE_AMOUNT_USDT", "25"))
@@ -78,7 +82,9 @@ def load_runtime_config():
         "target_symbols": list(DEFAULT_SYMBOLS),
         "max_total_exposure_usdt": DEFAULT_MAX_TOTAL_EXPOSURE_USDT,
         "trade_amount_usdt": TRADE_AMOUNT_USDT,
+        "max_open_positions": MAX_OPEN_POSITIONS,
         "trading_on_hold": False,
+        "interval": INTERVAL,
     }
     if not CONFIG_FILE.exists():
         return config
@@ -96,7 +102,11 @@ def load_runtime_config():
         trade_amount = Decimal(
             str(saved.get("trade_amount_usdt", TRADE_AMOUNT_USDT))
         )
+        max_open_positions = int(
+            saved.get("max_open_positions", MAX_OPEN_POSITIONS)
+        )
         trading_on_hold = bool(saved.get("trading_on_hold", False))
+        interval = str(saved.get("interval", INTERVAL))
         if not symbols:
             raise ValueError("At least one target symbol is required.")
         if maximum_exposure <= 0:
@@ -105,10 +115,16 @@ def load_runtime_config():
             raise ValueError("Per-trade amount must be greater than zero.")
         if trade_amount > maximum_exposure:
             raise ValueError("Per-trade amount cannot exceed maximum exposure.")
+        if max_open_positions <= 0:
+            raise ValueError("Maximum open positions must be greater than zero.")
+        if interval not in SUPPORTED_INTERVALS:
+            raise ValueError(f"Unsupported candle interval: {interval}.")
         config["target_symbols"] = list(symbols)
         config["max_total_exposure_usdt"] = maximum_exposure
         config["trade_amount_usdt"] = trade_amount
+        config["max_open_positions"] = max_open_positions
         config["trading_on_hold"] = trading_on_hold
+        config["interval"] = interval
         return config
     except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError) as error:
         print(f"Ignoring invalid bot_config.json: {error}")
@@ -131,8 +147,8 @@ def calculate_atr(data, window=14):
     return true_range.rolling(window=window).mean()
 
 
-def analyze_market(client, symbol):
-    klines = client.get_klines(symbol=symbol, interval=INTERVAL, limit=100)
+def analyze_market(client, symbol, interval):
+    klines = client.get_klines(symbol=symbol, interval=interval, limit=100)
     columns = [
         "time", "open", "high", "low", "close", "volume", "close_time",
         "quote_volume", "trades", "taker_base", "taker_quote", "ignore",
@@ -189,7 +205,7 @@ def save_positions(positions):
 
 def save_status(
     available_usdt, analyses, market_statuses, target_symbols, maximum_exposure,
-    trade_amount, trading_on_hold, suggestions,
+    trade_amount, max_open_positions, trading_on_hold, interval, suggestions,
 ):
     temporary_file = STATUS_FILE.with_suffix(".tmp")
     status = {
@@ -197,7 +213,9 @@ def save_status(
         "updated_at": int(time.time()),
         "available_usdt": str(available_usdt),
         "trade_amount_usdt": str(trade_amount),
+        "max_open_positions": max_open_positions,
         "trading_on_hold": trading_on_hold,
+        "interval": interval,
         "target_symbols": list(target_symbols),
         "max_total_exposure_usdt": str(maximum_exposure),
         "market_statuses": market_statuses,
@@ -311,11 +329,12 @@ def current_exposure(positions):
 
 
 def buy(
-    client, symbol, rules, analysis, positions, maximum_exposure, trade_amount
+    client, symbol, rules, analysis, positions, maximum_exposure, trade_amount,
+    max_open_positions,
 ):
     if symbol in positions:
         return None
-    if len(positions) >= MAX_OPEN_POSITIONS:
+    if len(positions) >= max_open_positions:
         print(f"{symbol} BUY skipped: maximum open positions reached.")
         return None
 
@@ -485,7 +504,7 @@ def wait_for_next_cycle(client, positions, rules_by_symbol):
 
 def decide_and_trade(
     client, symbol, rules, analysis, positions, maximum_exposure, trade_amount,
-    trading_on_hold,
+    max_open_positions, trading_on_hold,
 ):
     position = positions.get(symbol)
     price = Decimal(str(analysis["entry"]))
@@ -513,7 +532,7 @@ def decide_and_trade(
     if buy_signal:
         position = buy(
             client, symbol, rules, analysis, positions, maximum_exposure,
-            trade_amount,
+            trade_amount, max_open_positions,
         )
         return "BUY FILLED" if position else "BUY SKIPPED"
     else:
@@ -553,7 +572,9 @@ def main():
             target_symbols = runtime_config["target_symbols"]
             maximum_exposure = runtime_config["max_total_exposure_usdt"]
             trade_amount = runtime_config["trade_amount_usdt"]
+            max_open_positions = runtime_config["max_open_positions"]
             trading_on_hold = runtime_config["trading_on_hold"]
+            interval = runtime_config["interval"]
             # An open position is always monitored even if removed from targets.
             active_symbols = list(
                 dict.fromkeys(target_symbols + list(positions.keys()))
@@ -569,6 +590,8 @@ def main():
                 f"Targets: {', '.join(target_symbols)} | "
                 f"Trade amount: {trade_amount} USDT | "
                 f"Max exposure: {maximum_exposure} USDT | "
+                f"Max positions: {max_open_positions} | "
+                f"Interval: {interval} | "
                 f"New buys: {'ON HOLD' if trading_on_hold else 'ACTIVE'}"
             )
             analyses = {}
@@ -577,13 +600,14 @@ def main():
                 try:
                     if symbol not in rules_by_symbol:
                         rules_by_symbol[symbol] = get_market_rules(client, symbol)
-                    analysis = analyze_market(client, symbol)
+                    analysis = analyze_market(client, symbol, interval)
                     analyses[symbol] = analysis
                     print_report(symbol, analysis)
                     if TRADING_ENABLED:
                         market_statuses[symbol] = decide_and_trade(
                             client, symbol, rules_by_symbol[symbol], analysis, positions,
-                            maximum_exposure, trade_amount, trading_on_hold,
+                            maximum_exposure, trade_amount, max_open_positions,
+                            trading_on_hold,
                         )
                     else:
                         print(f"{symbol}: trading disabled.")
@@ -598,7 +622,7 @@ def main():
                 save_status(
                     get_free_balance(client, "USDT"), analyses, market_statuses,
                     target_symbols, maximum_exposure, trade_amount,
-                    trading_on_hold, suggestions,
+                    max_open_positions, trading_on_hold, interval, suggestions,
                 )
             except (BinanceAPIException, BinanceOrderException) as error:
                 print(f"Could not update account status: {error}")

@@ -15,6 +15,10 @@ TRANSACTION_FILE = PROJECT_DIR / "transactions.jsonl"
 STATUS_FILE = PROJECT_DIR / "bot_status.json"
 CONFIG_FILE = PROJECT_DIR / "bot_config.json"
 SELL_REQUEST_FILE = PROJECT_DIR / "sell_requests.jsonl"
+INTERVAL_OPTIONS = [
+    "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h",
+    "12h", "1d", "3d", "1w", "1M",
+]
 
 st.set_page_config(page_title="Binance Bot Dashboard", page_icon="📈", layout="wide")
 st.title("Binance Multi-Market Bot Dashboard")
@@ -96,13 +100,18 @@ def read_transactions():
     return transactions
 
 
-def write_config(symbols, maximum_exposure, trade_amount, trading_on_hold):
+def write_config(
+    symbols, maximum_exposure, trade_amount, max_open_positions,
+    trading_on_hold, interval,
+):
     temporary_file = CONFIG_FILE.with_suffix(".tmp")
     config = {
         "target_symbols": symbols,
         "max_total_exposure_usdt": str(maximum_exposure),
         "trade_amount_usdt": str(trade_amount),
+        "max_open_positions": max_open_positions,
         "trading_on_hold": trading_on_hold,
+        "interval": interval,
         "updated_at": int(datetime.now().timestamp()),
     }
     temporary_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
@@ -132,17 +141,28 @@ def render_settings_panel():
     trade_amount = config.get("trade_amount_usdt") or status.get(
         "trade_amount_usdt", "25"
     )
+    max_open_positions = int(
+        config.get("max_open_positions")
+        or status.get("max_open_positions", 3)
+    )
     trading_on_hold = bool(
         config.get("trading_on_hold", status.get("trading_on_hold", False))
     )
+    interval = str(config.get("interval") or status.get("interval", "15m"))
+    if interval not in INTERVAL_OPTIONS:
+        interval = "15m"
     with st.popover("Trading targets and exposure"):
         st.caption(
             f"Per trade: {float(trade_amount):,.2f} USDT | "
             f"Total exposure: {float(maximum):,.2f} USDT | "
+            f"Max positions: {max_open_positions} | "
+            f"Interval: {interval} | "
             f"Targets: {', '.join(symbols) if symbols else 'not reported yet'}"
         )
         with st.form("runtime_settings"):
-            trade_column, exposure_column = st.columns(2)
+            trade_column, exposure_column, positions_column, interval_column = (
+                st.columns(4)
+            )
             with trade_column:
                 trade_amount_input = st.number_input(
                     "Per-trade amount (USDT)",
@@ -158,6 +178,21 @@ def render_settings_panel():
                     value=float(maximum),
                     step=1.0,
                     help="Combined original entry value allowed across positions.",
+                )
+            with positions_column:
+                max_open_positions_input = st.number_input(
+                    "Maximum open positions",
+                    min_value=1,
+                    value=max_open_positions,
+                    step=1,
+                    help="Maximum number of symbols held at the same time.",
+                )
+            with interval_column:
+                interval_input = st.selectbox(
+                    "Candle interval",
+                    INTERVAL_OPTIONS,
+                    index=INTERVAL_OPTIONS.index(interval),
+                    help="Timeframe used to calculate indicators and buy signals.",
                 )
             symbols_input = st.text_input(
                 "Targeted Spot symbols",
@@ -202,7 +237,8 @@ def render_settings_panel():
                 st.error("Per-trade amount cannot exceed maximum total exposure.")
             else:
                 write_config(
-                    parsed_symbols, maximum_input, trade_amount_input, hold_input
+                    parsed_symbols, maximum_input, trade_amount_input,
+                    max_open_positions_input, hold_input, interval_input,
                 )
                 st.success(
                     "Settings saved. The bot will load them at the next analysis cycle."
@@ -459,6 +495,10 @@ def render_top_bar():
     trade_amount = config.get("trade_amount_usdt") or status.get(
         "trade_amount_usdt"
     )
+    max_open_positions = int(
+        config.get("max_open_positions")
+        or status.get("max_open_positions", 3)
+    )
     trading_on_hold = bool(
         config.get("trading_on_hold", status.get("trading_on_hold", False))
     )
@@ -475,6 +515,11 @@ def render_top_bar():
         )
     target_symbols = status.get("target_symbols") or config.get("target_symbols", [])
     tags = status_tags_html(target_symbols, status.get("market_statuses", {}))
+    active_interval = str(status.get("interval") or config.get("interval", "15m"))
+    tags = (
+        f'<span class="target-tag">INTERVAL &middot; '
+        f'{html.escape(active_interval)}</span>{tags}'
+    )
     today_class = "pnl-positive" if today_pnl >= 0 else "pnl-negative"
     total_class = "pnl-positive" if total_pnl >= 0 else "pnl-negative"
     available_text = f"{float(available):,.2f}" if available is not None else "N/A"
@@ -493,7 +538,7 @@ def render_top_bar():
           {hold_banner}
           <div class="summary-grid">
             <div class="summary-item"><div class="summary-label">Available USDT</div><div class="summary-value">{available_text}</div></div>
-            <div class="summary-item"><div class="summary-label">Open positions</div><div class="summary-value">{len(positions)}</div></div>
+            <div class="summary-item"><div class="summary-label">Open / max positions</div><div class="summary-value">{len(positions)} / {max_open_positions}</div></div>
             <div class="summary-item"><div class="summary-label">Per-trade max</div><div class="summary-value">{trade_amount_text}</div></div>
             <div class="summary-item"><div class="summary-label">Max total exposure</div><div class="summary-value">{float(maximum):,.2f}</div></div>
             <div class="summary-item"><div class="summary-label">Today realized P&amp;L</div><div class="summary-value {today_class}">{today_pnl:+,.4f}</div></div>

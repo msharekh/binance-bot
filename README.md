@@ -122,10 +122,10 @@ $env:ENABLE_TRADING = "true"
 These environment variables last for the current PowerShell session. Avoid
 storing secrets in scripts or committing them to source control.
 
-Other settings near the top of `app.py` control:
+Other defaults near the top of `app.py` control:
 
 - Trading symbols (`BTCUSDT`, `ETHUSDT`, and `TRXUSDT` by default)
-- Candle interval (one minute by default)
+- Candle interval (15 minutes by default; it can also be changed from the dashboard)
 - Risk/reward ratio
 - ATR stop-loss multiplier
 
@@ -197,10 +197,14 @@ The browser dashboard refreshes every five seconds and displays:
 ### Change targets and maximum exposure from the dashboard
 
 Open the compact **Trading targets and exposure** popover near the top. It shows
-the current maximum total exposure and targeted symbols. Enter:
+the current trade amount, maximum total exposure, candle interval, and targeted
+symbols. Enter:
 
 - A per-trade maximum amount in USDT
 - A maximum combined entry exposure in USDT
+- A maximum number of simultaneously open positions
+- A candle interval from the dropdown: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`,
+  `2h`, `4h`, `6h`, `8h`, `12h`, `1d`, `3d`, `1w`, or `1M`
 - Comma-separated Binance USDT Spot symbols such as
   `BTCUSDT,ETHUSDT,SOLUSDT`
 - Optionally enable **Hold new buys** to pause new entries
@@ -209,6 +213,15 @@ Select **Save and confirm settings**. The settings are written to
 `bot_config.json`, and the running bot loads them at the start of its next
 analysis cycle. The dashboard refuses to remove a symbol that has an open
 position, so the bot can continue monitoring its exit.
+
+After the dashboard saves `max_open_positions` in `bot_config.json`, that value
+overrides the `$env:MAX_OPEN_POSITIONS` default. You can safely set it below the
+current number of positions; the bot will keep monitoring existing positions but
+will not open another one until the count is below the new limit.
+
+Changing the candle interval affects the next market analysis and future entry
+signals. It does not recalculate the entry, stop loss, or take profit already
+stored for an open position.
 
 When **Hold new buys** is enabled, the dashboard shows a prominent orange hold
 banner. Existing positions remain monitored: stop-loss, take-profit, RSI exits,
