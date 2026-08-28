@@ -1,6 +1,7 @@
 import json
 import html
 import re
+import uuid
 from datetime import date, datetime
 from pathlib import Path
 
@@ -13,6 +14,7 @@ STATE_FILE = PROJECT_DIR / "trade_state.json"
 TRANSACTION_FILE = PROJECT_DIR / "transactions.jsonl"
 STATUS_FILE = PROJECT_DIR / "bot_status.json"
 CONFIG_FILE = PROJECT_DIR / "bot_config.json"
+SELL_REQUEST_FILE = PROJECT_DIR / "sell_requests.jsonl"
 
 st.set_page_config(page_title="Binance Bot Dashboard", page_icon="📈", layout="wide")
 st.title("Binance Multi-Market Bot Dashboard")
@@ -31,6 +33,15 @@ st.markdown(
     .suggestion-symbol {color:#67e8f9;font-size:1.25rem;font-weight:800}
     .suggestion-stat {color:#e2e8f0;font-weight:650}
     .suggestion-note {color:#cbd5e1;font-size:.92rem;line-height:1.35}
+    .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
+      margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
+      border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
+    .summary-grid {display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:.45rem}
+    .summary-item {padding:.42rem .55rem;border-radius:.5rem;background:#0f172a}
+    .summary-label {color:#94a3b8;font-size:.72rem;text-transform:uppercase;font-weight:700}
+    .summary-value {color:#f8fafc;font-size:1rem;font-weight:800}
+    .summary-tags {margin-top:.45rem}.pnl-positive{color:#4ade80}.pnl-negative{color:#f87171}
+    @media(max-width:900px){.summary-grid{grid-template-columns:repeat(2,1fr)}}
     </style>
     """,
     unsafe_allow_html=True,
@@ -79,6 +90,18 @@ def write_config(symbols, maximum_exposure):
     temporary_file.replace(CONFIG_FILE)
 
 
+def queue_sell_request(symbol, environment):
+    request = {
+        "command_id": uuid.uuid4().hex,
+        "action": "SELL_MARKET",
+        "symbol": symbol,
+        "environment": environment,
+        "created_at": int(datetime.now().timestamp()),
+    }
+    with SELL_REQUEST_FILE.open("a", encoding="utf-8") as request_file:
+        request_file.write(json.dumps(request) + "\n")
+
+
 def render_settings_panel():
     state = read_state()
     status = read_json(STATUS_FILE, {})
@@ -88,8 +111,8 @@ def render_settings_panel():
         "max_total_exposure_usdt", "75"
     )
 
-    with st.expander("Trading targets and exposure", expanded=False):
-        st.info(
+    with st.popover("Trading targets and exposure"):
+        st.caption(
             f"Current maximum total exposure: {float(maximum):,.2f} USDT · "
             f"Targets: {', '.join(symbols) if symbols else 'not reported yet'}"
         )
@@ -170,7 +193,9 @@ def transaction_frame(transactions):
     return history
 
 
-def render_position_progress(symbol, position, current_price):
+def render_position_progress(
+    symbol, position, current_price, trading_enabled, environment
+):
     stop_loss = float(position["stop_loss"])
     entry = float(position["entry"])
     take_profit = float(position["take_profit"])
@@ -188,7 +213,7 @@ def render_position_progress(symbol, position, current_price):
         f'<span class="symbol-title">{html.escape(symbol)}</span>',
         unsafe_allow_html=True,
     )
-    progress_column, profit_column = st.columns([4, 1])
+    progress_column, profit_column, action_column = st.columns([4, 1, 1])
     with progress_column:
         st.progress(
             progress,
@@ -200,6 +225,24 @@ def render_position_progress(symbol, position, current_price):
             f"{unrealized_pnl:+,.4f} USDT",
             f"{unrealized_pct:+.2f}%",
         )
+    with action_column:
+        with st.popover("Sell now"):
+            st.warning(
+                f"This submits a real market sell for the tracked {symbol} position. "
+                "The execution price may differ from the displayed price."
+            )
+            if not trading_enabled:
+                st.caption("Trading is disabled, so manual selling is unavailable.")
+            confirmed = st.button(
+                "Confirm market sell",
+                key=f"confirm_sell_{symbol}",
+                type="primary",
+                disabled=not trading_enabled,
+                use_container_width=True,
+            )
+            if confirmed:
+                queue_sell_request(symbol, environment)
+                st.success("Sell request queued. It expires in 30 seconds.")
     current_column, entry_column, distance_column = st.columns(3)
     current_column.metric("Current price", f"{current:.8f}")
     entry_column.metric("Entry marker", f"{entry_progress * 100:.1f}% of range")
@@ -213,32 +256,32 @@ def render_position_progress(symbol, position, current_price):
 
 def render_market_suggestions(status):
     suggestions = status.get("suggestions", [])
-    st.subheader("Three Spot watchlist candidates")
-    st.caption(
-        "Read-only screen: positive 24h momentum, at least 30M USDT volume, "
-        "then ranked by 24h range. This is not a profit guarantee or a buy signal."
-    )
-    if not suggestions:
-        st.info("Suggestions will appear after the bot refreshes Binance market data.")
-        return
-    columns = st.columns(3)
-    for column, suggestion in zip(columns, suggestions):
-        with column:
-            symbol = html.escape(suggestion["symbol"])
-            analysis = html.escape(suggestion["analysis"])
-            st.markdown(
-                f"""
-                <div class="suggestion-card">
-                  <div class="suggestion-symbol">{symbol}</div>
-                  <div class="suggestion-stat">Price: {suggestion['price']:.8f}</div>
-                  <div class="suggestion-stat">24h change: {suggestion['change_pct']:+.2f}%</div>
-                  <div class="suggestion-stat">24h range: {suggestion['range_pct']:.2f}%</div>
-                  <div class="suggestion-stat">Volume: {suggestion['quote_volume_usdt']/1_000_000:.1f}M USDT</div>
-                  <p class="suggestion-note">{analysis}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    with st.expander("Three Spot watchlist candidates", expanded=False):
+        st.caption(
+            "Read-only screen: positive 24h momentum, at least 30M USDT volume, "
+            "then ranked by 24h range. This is not a profit guarantee or a buy signal."
+        )
+        if not suggestions:
+            st.info("Suggestions will appear after the bot refreshes Binance market data.")
+            return
+        columns = st.columns(3)
+        for column, suggestion in zip(columns, suggestions):
+            with column:
+                symbol = html.escape(suggestion["symbol"])
+                analysis = html.escape(suggestion["analysis"])
+                st.markdown(
+                    f"""
+                    <div class="suggestion-card">
+                      <div class="suggestion-symbol">{symbol}</div>
+                      <div class="suggestion-stat">Price: {suggestion['price']:.8f}</div>
+                      <div class="suggestion-stat">24h change: {suggestion['change_pct']:+.2f}%</div>
+                      <div class="suggestion-stat">24h range: {suggestion['range_pct']:.2f}%</div>
+                      <div class="suggestion-stat">Volume: {suggestion['quote_volume_usdt']/1_000_000:.1f}M USDT</div>
+                      <p class="suggestion-note">{analysis}</p>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
 
 def render_results_by_symbol(history):
@@ -310,6 +353,67 @@ def filter_history(history):
     return filtered
 
 
+def status_tags_html(target_symbols, market_statuses):
+    tags = []
+    for symbol in target_symbols:
+        market_status = market_statuses.get(symbol, "UNKNOWN")
+        if "ERROR" in market_status:
+            style = "status-error"
+        elif market_status in {"MONITORING", "BUY FILLED", "SELL FILLED"}:
+            style = "status-active"
+        else:
+            style = "status-waiting"
+        tags.append(
+            f'<span class="target-tag {style}">{html.escape(symbol)} &middot; '
+            f'{html.escape(market_status)}</span>'
+        )
+    return "".join(tags)
+
+
+@st.fragment(run_every=5)
+def render_top_bar():
+    state = read_state()
+    status = read_json(STATUS_FILE, {})
+    config = read_json(CONFIG_FILE, {})
+    history = transaction_frame(read_transactions())
+    positions = state.get("positions", {})
+    available = status.get("available_usdt")
+    maximum = config.get("max_total_exposure_usdt") or status.get(
+        "max_total_exposure_usdt", "75"
+    )
+    total_pnl = 0.0
+    today_pnl = 0.0
+    if not history.empty:
+        sells = history[history["Side"] == "SELL"]
+        total_pnl = float(sells["Est. P&L (USDT)"].sum())
+        today_pnl = float(
+            sells.loc[
+                sells["Time"].dt.date == datetime.now().astimezone().date(),
+                "Est. P&L (USDT)",
+            ].sum()
+        )
+    target_symbols = status.get("target_symbols") or config.get("target_symbols", [])
+    tags = status_tags_html(target_symbols, status.get("market_statuses", {}))
+    today_class = "pnl-positive" if today_pnl >= 0 else "pnl-negative"
+    total_class = "pnl-positive" if total_pnl >= 0 else "pnl-negative"
+    available_text = f"{float(available):,.2f}" if available is not None else "N/A"
+    st.markdown(
+        f"""
+        <div class="sticky-summary">
+          <div class="summary-grid">
+            <div class="summary-item"><div class="summary-label">Available USDT</div><div class="summary-value">{available_text}</div></div>
+            <div class="summary-item"><div class="summary-label">Open positions</div><div class="summary-value">{len(positions)}</div></div>
+            <div class="summary-item"><div class="summary-label">Max allowed USDT</div><div class="summary-value">{float(maximum):,.2f}</div></div>
+            <div class="summary-item"><div class="summary-label">Today realized P&amp;L</div><div class="summary-value {today_class}">{today_pnl:+,.4f}</div></div>
+            <div class="summary-item"><div class="summary-label">Total realized P&amp;L</div><div class="summary-value {total_class}">{total_pnl:+,.4f}</div></div>
+          </div>
+          <div class="summary-tags">{tags}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 @st.fragment(run_every=5)
 def render_dashboard():
     state = read_state()
@@ -318,56 +422,22 @@ def render_dashboard():
         {
             "environment": state["environment"], "available_usdt": None,
             "markets": {}, "target_symbols": [], "market_statuses": {},
+            "trading_enabled": False,
         },
     )
     positions = state["positions"]
     history = transaction_frame(read_transactions())
-    exposure = sum(
-        float(position["quantity"]) * float(position["entry"])
-        for position in positions.values()
-    )
-    realized_pnl = (
-        history.loc[history["Side"] == "SELL", "Est. P&L (USDT)"].sum()
-        if not history.empty
-        else 0
-    )
-
-    environment, available, open_count, exposure_metric, pnl = st.columns(5)
-    environment.metric("Environment", status["environment"].upper())
-    available_value = status.get("available_usdt")
-    available.metric(
-        "Available USDT",
-        f"{float(available_value):,.2f}" if available_value is not None else "Unavailable",
-    )
-    open_count.metric("Open positions", len(positions))
-    exposure_metric.metric("Entry exposure", f"{exposure:,.2f} USDT")
-    pnl.metric("Estimated realized P&L", f"{realized_pnl:,.2f} USDT")
-
-    target_symbols = status.get("target_symbols", [])
-    market_statuses = status.get("market_statuses", {})
-    if target_symbols:
-        tags = []
-        for symbol in target_symbols:
-            market_status = market_statuses.get(symbol, "UNKNOWN")
-            if "ERROR" in market_status:
-                style = "status-error"
-            elif market_status in {"MONITORING", "BUY FILLED", "SELL FILLED"}:
-                style = "status-active"
-            else:
-                style = "status-waiting"
-            tags.append(
-                f'<span class="target-tag {style}">{html.escape(symbol)} · '
-                f'{html.escape(market_status)}</span>'
-            )
-        st.markdown("".join(tags), unsafe_allow_html=True)
-
     render_market_suggestions(status)
 
     st.subheader("Position exit progress")
     if positions:
         for symbol, position in positions.items():
             market = status.get("markets", {}).get(symbol, {})
-            render_position_progress(symbol, position, market.get("price"))
+            render_position_progress(
+                symbol, position, market.get("price"),
+                bool(status.get("trading_enabled", False)),
+                status.get("environment", state["environment"]),
+            )
     else:
         st.info("No positions are currently tracked.")
 
@@ -398,5 +468,6 @@ def render_dashboard():
     )
 
 
+render_top_bar()
 render_settings_panel()
 render_dashboard()

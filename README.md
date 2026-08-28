@@ -169,10 +169,14 @@ http://localhost:8501
 
 The browser dashboard refreshes every five seconds and displays:
 
+- A sticky top summary bar with available USDT, open-position count, maximum
+  allowed exposure, today's realized P&L, total realized P&L, and compact
+  symbol/status tags
 - Every currently tracked position and its stop-loss/take-profit levels
 - Available free USDT reported by the running bot
 - Current-price progress between stop loss, entry, and take profit
 - Live unrealized USDT profit and percentage beside each open position
+- A confirmed **Sell now** control beside each open-position progress bar
 - Header tags for every targeted symbol and its latest short bot status, such as
   `WAITING TO BUY`, `MONITORING`, or `BUY FILLED`
 - Three read-only Binance Spot watchlist candidates with current price, 24-hour
@@ -185,7 +189,7 @@ The browser dashboard refreshes every five seconds and displays:
 
 ### Change targets and maximum exposure from the dashboard
 
-Open **Trading targets and exposure** near the top of the dashboard. It shows
+Open the compact **Trading targets and exposure** popover near the top. It shows
 the current maximum total exposure and targeted symbols. Enter:
 
 - A maximum combined entry exposure in USDT
@@ -201,11 +205,27 @@ The bot validates new symbols against Binance before analyzing or trading them.
 An invalid or unavailable pair is reported as an error and does not prevent
 other configured markets from being processed.
 
+The three-currency Spot watchlist is collapsed by default. Expand it only when
+you want to review the current candidates and analysis.
+
+### Manually close a tracked position
+
+Select **Sell now** beside an open-position progress bar, review the warning,
+then select **Confirm market sell**. The dashboard queues a request; it does not
+hold Binance credentials or submit the order itself. The running bot validates
+the environment and tracked position, then submits a market sell within a few
+seconds.
+
+Manual sell requests expire after 30 seconds and are available only when
+`ENABLE_TRADING=true`. Market execution can differ from the price displayed on
+the dashboard. The bot also holds a local single-instance lock so a second copy
+of `app.py` cannot process real-money commands concurrently.
+
 The bot and dashboard have separate roles:
 
 - `app.py` must remain running to analyze the market and execute testnet orders.
-- `dashboard.py` reads the bot's local state and history; it does not place or
-  cancel orders.
+- `dashboard.py` reads local state and history and can queue a confirmed manual
+  sell request; only `app.py` holds credentials and submits the market order.
 - `trade_state.json` contains positions keyed by trading symbol and records the
   environment that created them.
 - `transactions.jsonl` contains the persistent filled-order history.
@@ -216,6 +236,8 @@ The bot and dashboard have separate roles:
   24-hour price range.
 - `bot_config.json` contains dashboard-confirmed target symbols and maximum total
   USDT exposure. It contains no API credentials.
+- `sell_requests.jsonl` is a short-lived local queue for confirmed dashboard
+  market-sell requests.
 
 The bot begins recording transactions after this feature is installed. Orders
 placed before then are not present in `transactions.jsonl` and cannot appear in

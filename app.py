@@ -1,4 +1,5 @@
 import json
+import msvcrt
 import os
 import time
 from decimal import Decimal, ROUND_DOWN
@@ -39,6 +40,10 @@ STATE_FILE = Path(__file__).with_name("trade_state.json")
 TRANSACTION_FILE = Path(__file__).with_name("transactions.jsonl")
 STATUS_FILE = Path(__file__).with_name("bot_status.json")
 CONFIG_FILE = Path(__file__).with_name("bot_config.json")
+SELL_REQUEST_FILE = Path(__file__).with_name("sell_requests.jsonl")
+SELL_PROCESSING_FILE = Path(__file__).with_name("sell_requests.processing.jsonl")
+LOCK_FILE = Path(__file__).with_name("bot.lock")
+INSTANCE_LOCK_HANDLE = None
 
 
 def create_client():
@@ -47,6 +52,24 @@ def create_client():
     if not api_key or not api_secret:
         raise RuntimeError("Set BINANCE_API_KEY and BINANCE_API_SECRET.")
     return Client(api_key.strip(), api_secret.strip(), testnet=TESTNET)
+
+
+def acquire_instance_lock():
+    global INSTANCE_LOCK_HANDLE
+    LOCK_FILE.touch(exist_ok=True)
+    lock_handle = LOCK_FILE.open("r+")
+    if LOCK_FILE.stat().st_size == 0:
+        lock_handle.write("0")
+        lock_handle.flush()
+        lock_handle.seek(0)
+    try:
+        msvcrt.locking(lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as error:
+        lock_handle.close()
+        raise RuntimeError(
+            "Another bot instance is already running. Stop it before starting this one."
+        ) from error
+    INSTANCE_LOCK_HANDLE = lock_handle
 
 
 def load_runtime_config():
@@ -163,6 +186,7 @@ def save_status(
         "target_symbols": list(target_symbols),
         "max_total_exposure_usdt": str(maximum_exposure),
         "market_statuses": market_statuses,
+        "trading_enabled": TRADING_ENABLED,
         "suggestions": suggestions,
         "markets": {
             symbol: {
@@ -364,6 +388,84 @@ def sell(client, symbol, rules, position, analysis, positions, reason):
     return order
 
 
+def load_claimed_sell_requests():
+    if not SELL_PROCESSING_FILE.exists() and SELL_REQUEST_FILE.exists():
+        try:
+            SELL_REQUEST_FILE.replace(SELL_PROCESSING_FILE)
+        except OSError:
+            return []
+    if not SELL_PROCESSING_FILE.exists():
+        return []
+    requests = []
+    try:
+        for line in SELL_PROCESSING_FILE.read_text(encoding="utf-8").splitlines():
+            try:
+                requests.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        return []
+    return requests
+
+
+def save_remaining_sell_requests(requests):
+    if not requests:
+        if SELL_PROCESSING_FILE.exists():
+            SELL_PROCESSING_FILE.unlink()
+        return
+    temporary_file = SELL_PROCESSING_FILE.with_suffix(".tmp")
+    temporary_file.write_text(
+        "".join(json.dumps(request) + "\n" for request in requests),
+        encoding="utf-8",
+    )
+    temporary_file.replace(SELL_PROCESSING_FILE)
+
+
+def process_sell_requests(client, positions, rules_by_symbol):
+    requests = load_claimed_sell_requests()
+    while requests:
+        request = requests.pop(0)
+        # Remove the request before placing an order: a crash may lose a request,
+        # but it cannot replay a real-money sell after restart.
+        save_remaining_sell_requests(requests)
+        symbol = str(request.get("symbol", "")).upper()
+        if request.get("action") != "SELL_MARKET":
+            print(f"{symbol} manual SELL rejected: unknown action.")
+            continue
+        if time.time() - int(request.get("created_at", 0)) > 30:
+            print(f"{symbol} manual SELL rejected: request expired.")
+            continue
+        if request.get("environment") != ENVIRONMENT:
+            print(f"{symbol} manual SELL rejected: environment mismatch.")
+            continue
+        position = positions.get(symbol)
+        if not position:
+            print(f"{symbol} manual SELL skipped: no tracked open position.")
+            continue
+        try:
+            if symbol not in rules_by_symbol:
+                rules_by_symbol[symbol] = get_market_rules(client, symbol)
+            ticker = client.get_symbol_ticker(symbol=symbol)
+            analysis = {"entry": float(ticker["price"])}
+            sell(
+                client, symbol, rules_by_symbol[symbol], position, analysis,
+                positions, "dashboard manual sell",
+            )
+        except (BinanceAPIException, BinanceOrderException) as error:
+            print(f"{symbol} manual SELL Binance error: {error}")
+        except Exception as error:
+            print(f"{symbol} manual SELL error: {error}")
+
+
+def wait_for_next_cycle(client, positions, rules_by_symbol):
+    elapsed = 0
+    while elapsed < POLL_SECONDS:
+        time.sleep(min(2, POLL_SECONDS - elapsed))
+        elapsed += 2
+        if TRADING_ENABLED:
+            process_sell_requests(client, positions, rules_by_symbol)
+
+
 def decide_and_trade(
     client, symbol, rules, analysis, positions, maximum_exposure
 ):
@@ -412,6 +514,7 @@ def print_report(symbol, analysis):
 
 
 def main():
+    acquire_instance_lock()
     client = create_client()
     positions = load_positions()
     rules_by_symbol = {}
@@ -421,6 +524,8 @@ def main():
     print(f"Multi-market bot | {mode} | Press Ctrl+C to stop")
     while True:
         try:
+            if TRADING_ENABLED:
+                process_sell_requests(client, positions, rules_by_symbol)
             runtime_config = load_runtime_config()
             target_symbols = runtime_config["target_symbols"]
             maximum_exposure = runtime_config["max_total_exposure_usdt"]
@@ -469,7 +574,7 @@ def main():
                 )
             except (BinanceAPIException, BinanceOrderException) as error:
                 print(f"Could not update account status: {error}")
-            time.sleep(POLL_SECONDS)
+            wait_for_next_cycle(client, positions, rules_by_symbol)
         except KeyboardInterrupt:
             print("\nStopped.")
             break

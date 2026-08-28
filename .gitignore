@@ -5,4 +5,7 @@ trade_state.json
 transactions.jsonl
 bot_status.json
 bot_config.json
+sell_requests.jsonl
+sell_requests.processing.jsonl
+bot.lock
 .env
