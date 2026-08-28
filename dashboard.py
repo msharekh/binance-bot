@@ -85,11 +85,23 @@ def render_position_progress(symbol, position, current_price):
     progress = max(0.0, min(1.0, progress))
     entry_progress = (entry - stop_loss) / span if span > 0 else 0.5
 
+    quantity = float(position["quantity"])
+    unrealized_pnl = (current - entry) * quantity
+    unrealized_pct = ((current - entry) / entry) * 100 if entry else 0
+
     st.markdown(f"**{symbol}**")
-    st.progress(
-        progress,
-        text=f"SL {stop_loss:.8f}  ←  Entry {entry:.8f}  →  TP {take_profit:.8f}",
-    )
+    progress_column, profit_column = st.columns([4, 1])
+    with progress_column:
+        st.progress(
+            progress,
+            text=f"SL {stop_loss:.8f}  ←  Entry {entry:.8f}  →  TP {take_profit:.8f}",
+        )
+    with profit_column:
+        st.metric(
+            "Current P&L",
+            f"{unrealized_pnl:+,.4f} USDT",
+            f"{unrealized_pct:+.2f}%",
+        )
     current_column, entry_column, distance_column = st.columns(3)
     current_column.metric("Current price", f"{current:.8f}")
     entry_column.metric("Entry marker", f"{entry_progress * 100:.1f}% of range")
@@ -175,7 +187,10 @@ def render_dashboard():
     state = read_state()
     status = read_json(
         STATUS_FILE,
-        {"environment": state["environment"], "available_usdt": None, "markets": {}},
+        {
+            "environment": state["environment"], "available_usdt": None,
+            "markets": {}, "target_symbols": [], "market_statuses": {},
+        },
     )
     positions = state["positions"]
     history = transaction_frame(read_transactions())
@@ -199,6 +214,15 @@ def render_dashboard():
     open_count.metric("Open positions", len(positions))
     exposure_metric.metric("Entry exposure", f"{exposure:,.2f} USDT")
     pnl.metric("Estimated realized P&L", f"{realized_pnl:,.2f} USDT")
+
+    target_symbols = status.get("target_symbols", [])
+    market_statuses = status.get("market_statuses", {})
+    if target_symbols:
+        tags = " ".join(
+            f"`{symbol} · {market_statuses.get(symbol, 'UNKNOWN')}`"
+            for symbol in target_symbols
+        )
+        st.markdown(tags)
 
     st.subheader("Position exit progress")
     if positions:

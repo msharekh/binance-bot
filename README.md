@@ -172,6 +172,9 @@ The browser dashboard refreshes every five seconds and displays:
 - Every currently tracked position and its stop-loss/take-profit levels
 - Available free USDT reported by the running bot
 - Current-price progress between stop loss, entry, and take profit
+- Live unrealized USDT profit and percentage beside each open position
+- Header tags for every targeted symbol and its latest short bot status, such as
+  `WAITING TO BUY`, `MONITORING`, or `BUY FILLED`
 - Filled production buy and sell orders across all configured symbols
 - Completed-trade results grouped by symbol, including win rate and estimated P&L
 - Transaction filters for symbol, side, reason, environment, and date range

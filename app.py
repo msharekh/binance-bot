@@ -117,16 +117,19 @@ def save_positions(positions):
     temporary_file.replace(STATE_FILE)
 
 
-def save_status(available_usdt, analyses):
+def save_status(available_usdt, analyses, market_statuses):
     temporary_file = STATUS_FILE.with_suffix(".tmp")
     status = {
         "environment": ENVIRONMENT,
         "updated_at": int(time.time()),
         "available_usdt": str(available_usdt),
+        "target_symbols": list(SYMBOLS),
+        "market_statuses": market_statuses,
         "markets": {
             symbol: {
                 "price": analysis["entry"],
                 "rsi": analysis["rsi"],
+                "status": market_statuses.get(symbol, "UNKNOWN"),
             }
             for symbol, analysis in analyses.items()
         },
@@ -278,20 +281,27 @@ def decide_and_trade(client, symbol, rules, analysis, positions):
     price = Decimal(str(analysis["entry"]))
     if position:
         if price <= Decimal(position["stop_loss"]):
-            sell(client, symbol, rules, position, analysis, positions, "stop loss")
+            order = sell(client, symbol, rules, position, analysis, positions, "stop loss")
+            return "SELL FILLED" if order else "SELL SKIPPED"
         elif price >= Decimal(position["take_profit"]):
-            sell(client, symbol, rules, position, analysis, positions, "take profit")
+            order = sell(client, symbol, rules, position, analysis, positions, "take profit")
+            return "SELL FILLED" if order else "SELL SKIPPED"
         elif analysis["rsi"] >= 65:
-            sell(client, symbol, rules, position, analysis, positions, "RSI sell signal")
+            order = sell(
+                client, symbol, rules, position, analysis, positions, "RSI sell signal"
+            )
+            return "SELL FILLED" if order else "SELL SKIPPED"
         else:
             print(f"{symbol} HOLD: open position is being monitored.")
-        return
+            return "MONITORING"
 
     buy_signal = analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2
     if buy_signal:
-        buy(client, symbol, rules, analysis, positions)
+        position = buy(client, symbol, rules, analysis, positions)
+        return "BUY FILLED" if position else "BUY SKIPPED"
     else:
         print(f"{symbol} NO TRADE: waiting for a buy signal.")
+        return "WAITING TO BUY"
 
 
 def print_report(symbol, analysis):
@@ -328,23 +338,29 @@ def main():
         try:
             print(time.strftime("%Y-%m-%d %H:%M:%S"))
             analyses = {}
+            market_statuses = {}
             for symbol in SYMBOLS:
                 try:
                     analysis = analyze_market(client, symbol)
                     analyses[symbol] = analysis
                     print_report(symbol, analysis)
                     if TRADING_ENABLED:
-                        decide_and_trade(
+                        market_statuses[symbol] = decide_and_trade(
                             client, symbol, rules_by_symbol[symbol], analysis, positions
                         )
                     else:
                         print(f"{symbol}: trading disabled.")
+                        market_statuses[symbol] = "ANALYSIS ONLY"
                 except (BinanceAPIException, BinanceOrderException) as error:
                     print(f"{symbol} Binance error: {error}")
+                    market_statuses[symbol] = "BINANCE ERROR"
                 except Exception as error:
                     print(f"{symbol} error: {error}")
+                    market_statuses[symbol] = "ERROR"
             try:
-                save_status(get_free_balance(client, "USDT"), analyses)
+                save_status(
+                    get_free_balance(client, "USDT"), analyses, market_statuses
+                )
             except (BinanceAPIException, BinanceOrderException) as error:
                 print(f"Could not update account status: {error}")
             time.sleep(POLL_SECONDS)
