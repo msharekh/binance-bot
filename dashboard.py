@@ -4,6 +4,7 @@ import re
 import uuid
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
@@ -42,6 +43,8 @@ st.markdown(
     .result-positive {color:#4ade80;font-size:1.1rem;font-weight:800}
     .result-negative {color:#f87171;font-size:1.1rem;font-weight:800}
     .position-symbol {color:#38bdf8;font-size:1.15rem;font-weight:900;letter-spacing:.03em}
+    .position-symbol a {color:#38bdf8;text-decoration:none;border-bottom:1px dashed #38bdf8}
+    .position-symbol a:hover {color:#7dd3fc;border-bottom-style:solid}
     .position-quantity {color:#94a3b8;font-size:.78rem}
     .position-pnl {font-size:1.05rem;font-weight:900;text-align:right}
     .position-stats {display:grid;grid-template-columns:repeat(2,1fr);gap:.3rem;
@@ -300,6 +303,10 @@ def transaction_frame(transactions):
 def render_position_progress(
     symbol, position, current_price, trading_enabled, environment
 ):
+    tradingview_url = (
+        "https://www.tradingview.com/chart/?symbol="
+        + quote(f"BINANCE:{symbol}", safe="")
+    )
     stop_loss = float(position["stop_loss"])
     entry = float(position["entry"])
     take_profit = float(position["take_profit"])
@@ -325,7 +332,10 @@ def render_position_progress(
     symbol_column, profit_column, action_column = st.columns([2, 2, 1])
     with symbol_column:
         st.markdown(
-            f'<div class="position-symbol">{html.escape(symbol)}</div>'
+            f'<div class="position-symbol"><a href="{html.escape(tradingview_url)}" '
+            f'target="_blank" rel="noopener noreferrer" '
+            f'title="Open {html.escape(symbol)} on TradingView">'
+            f'{html.escape(symbol)} &#8599;</a></div>'
             f'<div class="position-quantity">Quantity: {quantity:.8f}</div>',
             unsafe_allow_html=True,
         )

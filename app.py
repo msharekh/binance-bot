@@ -306,9 +306,29 @@ def refresh_live_prices(client, symbols):
         "updated_at": int(time.time()),
         "prices": prices,
     }
-    with temporary_file.open("w", encoding="utf-8") as live_file:
-        json.dump(payload, live_file, indent=2)
-    temporary_file.replace(LIVE_PRICE_FILE)
+    try:
+        with temporary_file.open("w", encoding="utf-8") as live_file:
+            json.dump(payload, live_file, indent=2)
+    except OSError as error:
+        print(f"Could not write live-price update: {error}")
+        return
+
+    for attempt in range(6):
+        try:
+            temporary_file.replace(LIVE_PRICE_FILE)
+            return
+        except PermissionError as error:
+            if attempt == 5:
+                print(
+                    "Live-price file remained locked; skipping this refresh "
+                    f"and trying again in {LIVE_PRICE_REFRESH_SECONDS} seconds: "
+                    f"{error}"
+                )
+                return
+            time.sleep(0.05 * (attempt + 1))
+        except OSError as error:
+            print(f"Could not publish live-price update: {error}")
+            return
 
 
 def record_transaction(transaction):
