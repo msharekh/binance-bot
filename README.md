@@ -170,9 +170,13 @@ http://localhost:8501
 The browser dashboard refreshes every five seconds and displays:
 
 - Every currently tracked position and its stop-loss/take-profit levels
+- Available free USDT reported by the running bot
+- Current-price progress between stop loss, entry, and take profit
 - Filled production buy and sell orders across all configured symbols
+- Completed-trade results grouped by symbol, including win rate and estimated P&L
+- Transaction filters for symbol, side, reason, environment, and date range
 - Estimated realized profit or loss before commissions
-- A CSV download of the transaction history
+- A CSV download of the filtered transaction history
 
 The bot and dashboard have separate roles:
 
@@ -182,6 +186,8 @@ The bot and dashboard have separate roles:
 - `trade_state.json` contains positions keyed by trading symbol and records the
   environment that created them.
 - `transactions.jsonl` contains the persistent filled-order history.
+- `bot_status.json` contains the latest available USDT and market prices used by
+  the dashboard. It is refreshed after each bot analysis cycle.
 
 The bot begins recording transactions after this feature is installed. Orders
 placed before then are not present in `transactions.jsonl` and cannot appear in

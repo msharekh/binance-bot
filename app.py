@@ -34,6 +34,7 @@ ENVIRONMENT = "testnet" if TESTNET else "production"
 TRADING_ENABLED = os.getenv("ENABLE_TRADING", "false").lower() == "true"
 STATE_FILE = Path(__file__).with_name("trade_state.json")
 TRANSACTION_FILE = Path(__file__).with_name("transactions.jsonl")
+STATUS_FILE = Path(__file__).with_name("bot_status.json")
 
 
 def create_client():
@@ -114,6 +115,25 @@ def save_positions(positions):
     with temporary_file.open("w", encoding="utf-8") as state_file:
         json.dump(state, state_file, indent=2)
     temporary_file.replace(STATE_FILE)
+
+
+def save_status(available_usdt, analyses):
+    temporary_file = STATUS_FILE.with_suffix(".tmp")
+    status = {
+        "environment": ENVIRONMENT,
+        "updated_at": int(time.time()),
+        "available_usdt": str(available_usdt),
+        "markets": {
+            symbol: {
+                "price": analysis["entry"],
+                "rsi": analysis["rsi"],
+            }
+            for symbol, analysis in analyses.items()
+        },
+    }
+    with temporary_file.open("w", encoding="utf-8") as status_file:
+        json.dump(status, status_file, indent=2)
+    temporary_file.replace(STATUS_FILE)
 
 
 def record_transaction(transaction):
@@ -307,9 +327,11 @@ def main():
     while True:
         try:
             print(time.strftime("%Y-%m-%d %H:%M:%S"))
+            analyses = {}
             for symbol in SYMBOLS:
                 try:
                     analysis = analyze_market(client, symbol)
+                    analyses[symbol] = analysis
                     print_report(symbol, analysis)
                     if TRADING_ENABLED:
                         decide_and_trade(
@@ -321,6 +343,10 @@ def main():
                     print(f"{symbol} Binance error: {error}")
                 except Exception as error:
                     print(f"{symbol} error: {error}")
+            try:
+                save_status(get_free_balance(client, "USDT"), analyses)
+            except (BinanceAPIException, BinanceOrderException) as error:
+                print(f"Could not update account status: {error}")
             time.sleep(POLL_SECONDS)
         except KeyboardInterrupt:
             print("\nStopped.")
