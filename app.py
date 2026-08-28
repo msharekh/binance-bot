@@ -10,7 +10,8 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 
 
-INTERVAL = Client.KLINE_INTERVAL_1MINUTE
+# INTERVAL = Client.KLINE_INTERVAL_1MINUTE
+INTERVAL = Client.KLINE_INTERVAL_15MINUTE
 RISK_REWARD_RATIO = Decimal("2")
 ATR_SL_MULTIPLIER = Decimal("1.5")
 TRADE_AMOUNT_USDT = Decimal(os.getenv("TRADE_AMOUNT_USDT", "25"))
