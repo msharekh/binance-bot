@@ -33,13 +33,19 @@ st.markdown(
     .suggestion-symbol {color:#67e8f9;font-size:1.25rem;font-weight:800}
     .suggestion-stat {color:#e2e8f0;font-weight:650}
     .suggestion-note {color:#cbd5e1;font-size:.92rem;line-height:1.35}
+    .result-card {padding:1rem;border-radius:.7rem;background:#0f172a;
+      border:1px solid #334155;min-height:10rem;margin-bottom:.7rem}
+    .result-symbol {color:#c4b5fd;font-size:1.25rem;font-weight:800}
+    .result-stat {color:#e2e8f0;font-weight:650;margin-top:.18rem}
+    .result-positive {color:#4ade80;font-size:1.1rem;font-weight:800}
+    .result-negative {color:#f87171;font-size:1.1rem;font-weight:800}
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
       margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
     .summary-grid {display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:.45rem}
     .summary-item {padding:.42rem .55rem;border-radius:.5rem;background:#0f172a}
-    .summary-label {color:#94a3b8;font-size:.72rem;text-transform:uppercase;font-weight:700}
-    .summary-value {color:#f8fafc;font-size:1rem;font-weight:800}
+    .summary-label {color:#cbd5e1;font-size:.9rem;text-transform:uppercase;font-weight:800}
+    .summary-value {color:#f8fafc;font-size:1.5rem;font-weight:900;line-height:1.2}
     .summary-tags {margin-top:.45rem}.pnl-positive{color:#4ade80}.pnl-negative{color:#f87171}
     @media(max-width:900px){.summary-grid{grid-template-columns:repeat(2,1fr)}}
     </style>
@@ -256,7 +262,7 @@ def render_position_progress(
 
 def render_market_suggestions(status):
     suggestions = status.get("suggestions", [])
-    with st.expander("Three Spot watchlist candidates", expanded=False):
+    with st.expander("Six Spot watchlist candidates", expanded=False):
         st.caption(
             "Read-only screen: positive 24h momentum, at least 30M USDT volume, "
             "then ranked by 24h range. This is not a profit guarantee or a buy signal."
@@ -264,51 +270,69 @@ def render_market_suggestions(status):
         if not suggestions:
             st.info("Suggestions will appear after the bot refreshes Binance market data.")
             return
-        columns = st.columns(3)
-        for column, suggestion in zip(columns, suggestions):
-            with column:
-                symbol = html.escape(suggestion["symbol"])
-                analysis = html.escape(suggestion["analysis"])
-                st.markdown(
-                    f"""
-                    <div class="suggestion-card">
-                      <div class="suggestion-symbol">{symbol}</div>
-                      <div class="suggestion-stat">Price: {suggestion['price']:.8f}</div>
-                      <div class="suggestion-stat">24h change: {suggestion['change_pct']:+.2f}%</div>
-                      <div class="suggestion-stat">24h range: {suggestion['range_pct']:.2f}%</div>
-                      <div class="suggestion-stat">Volume: {suggestion['quote_volume_usdt']/1_000_000:.1f}M USDT</div>
-                      <p class="suggestion-note">{analysis}</p>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+        for start in range(0, len(suggestions), 3):
+            columns = st.columns(3)
+            for column, suggestion in zip(columns, suggestions[start : start + 3]):
+                with column:
+                    symbol = html.escape(suggestion["symbol"])
+                    analysis = html.escape(suggestion["analysis"])
+                    st.markdown(
+                        f"""
+                        <div class="suggestion-card">
+                          <div class="suggestion-symbol">{symbol}</div>
+                          <div class="suggestion-stat">Price: {suggestion['price']:.8f}</div>
+                          <div class="suggestion-stat">24h change: {suggestion['change_pct']:+.2f}%</div>
+                          <div class="suggestion-stat">24h range: {suggestion['range_pct']:.2f}%</div>
+                          <div class="suggestion-stat">Volume: {suggestion['quote_volume_usdt']/1_000_000:.1f}M USDT</div>
+                          <p class="suggestion-note">{analysis}</p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
 
 def render_results_by_symbol(history):
-    sells = history[history["Side"] == "SELL"].copy()
-    if sells.empty:
-        st.info("No completed trades are available for symbol results yet.")
-        return
-    sells["Win"] = sells["Est. P&L (USDT)"].fillna(0) > 0
-    results = (
-        sells.groupby("Symbol", dropna=False)
-        .agg(
-            Completed_trades=("Side", "size"),
-            Wins=("Win", "sum"),
-            Estimated_PnL_USDT=("Est. P&L (USDT)", "sum"),
-            Average_PnL_USDT=("Est. P&L (USDT)", "mean"),
+    with st.expander("Results by symbol", expanded=False):
+        if history.empty:
+            st.info("No completed trades are available for symbol results yet.")
+            return
+        sells = history[history["Side"] == "SELL"].copy()
+        if sells.empty:
+            st.info("No completed trades are available for symbol results yet.")
+            return
+        sells["Win"] = sells["Est. P&L (USDT)"].fillna(0) > 0
+        results = (
+            sells.groupby("Symbol", dropna=False)
+            .agg(
+                completed=("Side", "size"),
+                wins=("Win", "sum"),
+                total_pnl=("Est. P&L (USDT)", "sum"),
+                average_pnl=("Est. P&L (USDT)", "mean"),
+            )
+            .reset_index()
+            .sort_values("total_pnl", ascending=False)
         )
-        .reset_index()
-    )
-    results["Win rate"] = results["Wins"] / results["Completed_trades"] * 100
-    results = results.rename(
-        columns={
-            "Completed_trades": "Completed trades",
-            "Estimated_PnL_USDT": "Estimated P&L (USDT)",
-            "Average_PnL_USDT": "Average P&L (USDT)",
-        }
-    )
-    st.dataframe(results, hide_index=True, use_container_width=True)
+        results["win_rate"] = results["wins"] / results["completed"] * 100
+        records = results.to_dict("records")
+        for start in range(0, len(records), 3):
+            columns = st.columns(3)
+            for column, result in zip(columns, records[start : start + 3]):
+                total_pnl = float(result["total_pnl"])
+                pnl_style = "result-positive" if total_pnl >= 0 else "result-negative"
+                with column:
+                    st.markdown(
+                        f"""
+                        <div class="result-card">
+                          <div class="result-symbol">{html.escape(str(result['Symbol']))}</div>
+                          <div class="{pnl_style}">Total P&amp;L: {total_pnl:+.4f} USDT</div>
+                          <div class="result-stat">Completed trades: {int(result['completed'])}</div>
+                          <div class="result-stat">Wins: {int(result['wins'])}</div>
+                          <div class="result-stat">Win rate: {float(result['win_rate']):.1f}%</div>
+                          <div class="result-stat">Average P&amp;L: {float(result['average_pnl']):+.4f} USDT</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
 
 def filter_history(history):
@@ -441,11 +465,7 @@ def render_dashboard():
     else:
         st.info("No positions are currently tracked.")
 
-    st.subheader("Results by symbol")
-    if history.empty:
-        st.info("No completed transaction history is available.")
-    else:
-        render_results_by_symbol(history)
+    render_results_by_symbol(history)
 
     st.subheader("Transaction history")
     if history.empty:

@@ -179,10 +179,12 @@ The browser dashboard refreshes every five seconds and displays:
 - A confirmed **Sell now** control beside each open-position progress bar
 - Header tags for every targeted symbol and its latest short bot status, such as
   `WAITING TO BUY`, `MONITORING`, or `BUY FILLED`
-- Three read-only Binance Spot watchlist candidates with current price, 24-hour
+- Six read-only Binance Spot watchlist candidates with current price, 24-hour
   change, trading range, USDT volume, and a short justification
 - Filled production buy and sell orders across all configured symbols
 - Completed-trade results grouped by symbol, including win rate and estimated P&L
+- Collapsible color-coded result cards per symbol, with green/red total P&L,
+  completed trades, wins, win rate, and average P&L
 - Transaction filters for symbol, side, reason, environment, and date range
 - Estimated realized profit or loss before commissions
 - A CSV download of the filtered transaction history
@@ -205,7 +207,7 @@ The bot validates new symbols against Binance before analyzing or trading them.
 An invalid or unavailable pair is reported as an error and does not prevent
 other configured markets from being processed.
 
-The three-currency Spot watchlist is collapsed by default. Expand it only when
+The six-currency Spot watchlist is collapsed by default. Expand it only when
 you want to review the current candidates and analysis.
 
 ### Manually close a tracked position

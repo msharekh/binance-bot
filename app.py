@@ -33,7 +33,7 @@ DEFAULT_SYMBOLS = tuple(
 )
 
 # This remains production to preserve the environment selected by the user.
-TESTNET = False
+TESTNET = os.getenv("BINANCE_TESTNET", "false").lower() == "true" 
 ENVIRONMENT = "testnet" if TESTNET else "production"
 TRADING_ENABLED = os.getenv("ENABLE_TRADING", "false").lower() == "true"
 STATE_FILE = Path(__file__).with_name("trade_state.json")
@@ -281,7 +281,7 @@ def get_market_suggestions(client):
             }
         )
     candidates.sort(key=lambda item: item["range_pct"], reverse=True)
-    return candidates[:3]
+    return candidates[:6]
 
 
 def round_to_step(quantity, step_size):
