@@ -4,4 +4,5 @@ __pycache__/
 trade_state.json
 transactions.jsonl
 bot_status.json
+bot_config.json
 .env

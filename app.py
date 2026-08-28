@@ -13,12 +13,15 @@ INTERVAL = Client.KLINE_INTERVAL_1MINUTE
 RISK_REWARD_RATIO = Decimal("2")
 ATR_SL_MULTIPLIER = Decimal("1.5")
 TRADE_AMOUNT_USDT = Decimal(os.getenv("TRADE_AMOUNT_USDT", "25"))
-MAX_TOTAL_EXPOSURE_USDT = Decimal(os.getenv("MAX_TOTAL_EXPOSURE_USDT", "75"))
+DEFAULT_MAX_TOTAL_EXPOSURE_USDT = Decimal(
+    os.getenv("MAX_TOTAL_EXPOSURE_USDT", "75")
+)
 MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
 POLL_SECONDS = 60
+SUGGESTION_REFRESH_SECONDS = 15 * 60
 
 # Comma-separated USDT markets, for example: BTCUSDT,ETHUSDT,TRXUSDT
-SYMBOLS = tuple(
+DEFAULT_SYMBOLS = tuple(
     dict.fromkeys(
         symbol.strip().upper()
         for symbol in os.getenv(
@@ -35,6 +38,7 @@ TRADING_ENABLED = os.getenv("ENABLE_TRADING", "false").lower() == "true"
 STATE_FILE = Path(__file__).with_name("trade_state.json")
 TRANSACTION_FILE = Path(__file__).with_name("transactions.jsonl")
 STATUS_FILE = Path(__file__).with_name("bot_status.json")
+CONFIG_FILE = Path(__file__).with_name("bot_config.json")
 
 
 def create_client():
@@ -43,6 +47,36 @@ def create_client():
     if not api_key or not api_secret:
         raise RuntimeError("Set BINANCE_API_KEY and BINANCE_API_SECRET.")
     return Client(api_key.strip(), api_secret.strip(), testnet=TESTNET)
+
+
+def load_runtime_config():
+    config = {
+        "target_symbols": list(DEFAULT_SYMBOLS),
+        "max_total_exposure_usdt": DEFAULT_MAX_TOTAL_EXPOSURE_USDT,
+    }
+    if not CONFIG_FILE.exists():
+        return config
+    try:
+        with CONFIG_FILE.open("r", encoding="utf-8") as config_file:
+            saved = json.load(config_file)
+        symbols = tuple(
+            dict.fromkeys(
+                str(symbol).strip().upper()
+                for symbol in saved.get("target_symbols", [])
+                if str(symbol).strip()
+            )
+        )
+        maximum_exposure = Decimal(str(saved["max_total_exposure_usdt"]))
+        if not symbols:
+            raise ValueError("At least one target symbol is required.")
+        if maximum_exposure <= 0:
+            raise ValueError("Maximum exposure must be greater than zero.")
+        config["target_symbols"] = list(symbols)
+        config["max_total_exposure_usdt"] = maximum_exposure
+        return config
+    except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError) as error:
+        print(f"Ignoring invalid bot_config.json: {error}")
+        return config
 
 
 def calculate_rsi(data, window=14):
@@ -117,14 +151,19 @@ def save_positions(positions):
     temporary_file.replace(STATE_FILE)
 
 
-def save_status(available_usdt, analyses, market_statuses):
+def save_status(
+    available_usdt, analyses, market_statuses, target_symbols, maximum_exposure,
+    suggestions,
+):
     temporary_file = STATUS_FILE.with_suffix(".tmp")
     status = {
         "environment": ENVIRONMENT,
         "updated_at": int(time.time()),
         "available_usdt": str(available_usdt),
-        "target_symbols": list(SYMBOLS),
+        "target_symbols": list(target_symbols),
+        "max_total_exposure_usdt": str(maximum_exposure),
         "market_statuses": market_statuses,
+        "suggestions": suggestions,
         "markets": {
             symbol: {
                 "price": analysis["entry"],
@@ -172,6 +211,55 @@ def get_market_rules(client, symbol):
     }
 
 
+def get_market_suggestions(client):
+    excluded_symbols = {
+        "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "DAIUSDT",
+        "EURUSDT", "TRYUSDT", "AEURUSDT", "BFUSDUSDT", "USDEUSDT",
+    }
+    candidates = []
+    for ticker in client.get_ticker():
+        symbol = ticker["symbol"]
+        if (
+            not symbol.endswith("USDT")
+            or symbol in excluded_symbols
+            or any(symbol.endswith(suffix) for suffix in (
+                "UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT"
+            ))
+        ):
+            continue
+        quote_volume = float(ticker["quoteVolume"])
+        change_pct = float(ticker["priceChangePercent"])
+        weighted_average = float(ticker["weightedAvgPrice"])
+        if quote_volume < 30_000_000 or change_pct <= 0 or weighted_average <= 0:
+            continue
+        range_pct = (
+            (float(ticker["highPrice"]) - float(ticker["lowPrice"]))
+            / weighted_average
+            * 100
+        )
+        risk_note = (
+            "Strong momentum; pullback risk is elevated."
+            if change_pct >= 10
+            else "Positive momentum with comparatively lower extension."
+        )
+        candidates.append(
+            {
+                "symbol": symbol,
+                "price": float(ticker["lastPrice"]),
+                "change_pct": change_pct,
+                "range_pct": range_pct,
+                "quote_volume_usdt": quote_volume,
+                "analysis": (
+                    f"Positive {change_pct:.1f}% momentum, {range_pct:.1f}% "
+                    f"24h range, and {quote_volume / 1_000_000:.1f}M USDT volume. "
+                    f"{risk_note}"
+                ),
+            }
+        )
+    candidates.sort(key=lambda item: item["range_pct"], reverse=True)
+    return candidates[:3]
+
+
 def round_to_step(quantity, step_size):
     return (quantity / step_size).to_integral_value(rounding=ROUND_DOWN) * step_size
 
@@ -183,14 +271,14 @@ def current_exposure(positions):
     )
 
 
-def buy(client, symbol, rules, analysis, positions):
+def buy(client, symbol, rules, analysis, positions, maximum_exposure):
     if symbol in positions:
         return None
     if len(positions) >= MAX_OPEN_POSITIONS:
         print(f"{symbol} BUY skipped: maximum open positions reached.")
         return None
 
-    remaining_exposure = MAX_TOTAL_EXPOSURE_USDT - current_exposure(positions)
+    remaining_exposure = maximum_exposure - current_exposure(positions)
     available_usdt = get_free_balance(client, rules["quote_asset"])
     amount = min(TRADE_AMOUNT_USDT, remaining_exposure, available_usdt)
     if amount < rules["min_notional"] or amount <= 0:
@@ -276,7 +364,9 @@ def sell(client, symbol, rules, position, analysis, positions, reason):
     return order
 
 
-def decide_and_trade(client, symbol, rules, analysis, positions):
+def decide_and_trade(
+    client, symbol, rules, analysis, positions, maximum_exposure
+):
     position = positions.get(symbol)
     price = Decimal(str(analysis["entry"]))
     if position:
@@ -297,7 +387,9 @@ def decide_and_trade(client, symbol, rules, analysis, positions):
 
     buy_signal = analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2
     if buy_signal:
-        position = buy(client, symbol, rules, analysis, positions)
+        position = buy(
+            client, symbol, rules, analysis, positions, maximum_exposure
+        )
         return "BUY FILLED" if position else "BUY SKIPPED"
     else:
         print(f"{symbol} NO TRADE: waiting for a buy signal.")
@@ -320,33 +412,46 @@ def print_report(symbol, analysis):
 
 
 def main():
-    if not SYMBOLS:
-        raise RuntimeError("TRADING_SYMBOLS must contain at least one symbol.")
     client = create_client()
     positions = load_positions()
-    rules_by_symbol = {symbol: get_market_rules(client, symbol) for symbol in SYMBOLS}
-    unknown_positions = set(positions) - set(SYMBOLS)
-    if unknown_positions:
-        raise RuntimeError(
-            "Open state exists for symbols missing from TRADING_SYMBOLS: "
-            + ", ".join(sorted(unknown_positions))
-        )
-
+    rules_by_symbol = {}
+    suggestions = []
+    suggestions_updated_at = 0
     mode = f"{ENVIRONMENT.upper()} TRADING" if TRADING_ENABLED else "ANALYSIS ONLY"
-    print(f"Monitoring {', '.join(SYMBOLS)} | {mode} | Press Ctrl+C to stop")
+    print(f"Multi-market bot | {mode} | Press Ctrl+C to stop")
     while True:
         try:
+            runtime_config = load_runtime_config()
+            target_symbols = runtime_config["target_symbols"]
+            maximum_exposure = runtime_config["max_total_exposure_usdt"]
+            # An open position is always monitored even if removed from targets.
+            active_symbols = list(
+                dict.fromkeys(target_symbols + list(positions.keys()))
+            )
+            if time.time() - suggestions_updated_at >= SUGGESTION_REFRESH_SECONDS:
+                try:
+                    suggestions = get_market_suggestions(client)
+                    suggestions_updated_at = time.time()
+                except BinanceAPIException as error:
+                    print(f"Could not refresh market suggestions: {error}")
             print(time.strftime("%Y-%m-%d %H:%M:%S"))
+            print(
+                f"Targets: {', '.join(target_symbols)} | "
+                f"Max exposure: {maximum_exposure} USDT"
+            )
             analyses = {}
             market_statuses = {}
-            for symbol in SYMBOLS:
+            for symbol in active_symbols:
                 try:
+                    if symbol not in rules_by_symbol:
+                        rules_by_symbol[symbol] = get_market_rules(client, symbol)
                     analysis = analyze_market(client, symbol)
                     analyses[symbol] = analysis
                     print_report(symbol, analysis)
                     if TRADING_ENABLED:
                         market_statuses[symbol] = decide_and_trade(
-                            client, symbol, rules_by_symbol[symbol], analysis, positions
+                            client, symbol, rules_by_symbol[symbol], analysis, positions,
+                            maximum_exposure,
                         )
                     else:
                         print(f"{symbol}: trading disabled.")
@@ -359,7 +464,8 @@ def main():
                     market_statuses[symbol] = "ERROR"
             try:
                 save_status(
-                    get_free_balance(client, "USDT"), analyses, market_statuses
+                    get_free_balance(client, "USDT"), analyses, market_statuses,
+                    target_symbols, maximum_exposure, suggestions,
                 )
             except (BinanceAPIException, BinanceOrderException) as error:
                 print(f"Could not update account status: {error}")

@@ -175,11 +175,31 @@ The browser dashboard refreshes every five seconds and displays:
 - Live unrealized USDT profit and percentage beside each open position
 - Header tags for every targeted symbol and its latest short bot status, such as
   `WAITING TO BUY`, `MONITORING`, or `BUY FILLED`
+- Three read-only Binance Spot watchlist candidates with current price, 24-hour
+  change, trading range, USDT volume, and a short justification
 - Filled production buy and sell orders across all configured symbols
 - Completed-trade results grouped by symbol, including win rate and estimated P&L
 - Transaction filters for symbol, side, reason, environment, and date range
 - Estimated realized profit or loss before commissions
 - A CSV download of the filtered transaction history
+
+### Change targets and maximum exposure from the dashboard
+
+Open **Trading targets and exposure** near the top of the dashboard. It shows
+the current maximum total exposure and targeted symbols. Enter:
+
+- A maximum combined entry exposure in USDT
+- Comma-separated Binance USDT Spot symbols such as
+  `BTCUSDT,ETHUSDT,SOLUSDT`
+
+Select **Save and confirm settings**. The settings are written to
+`bot_config.json`, and the running bot loads them at the start of its next
+analysis cycle. The dashboard refuses to remove a symbol that has an open
+position, so the bot can continue monitoring its exit.
+
+The bot validates new symbols against Binance before analyzing or trading them.
+An invalid or unavailable pair is reported as an error and does not prevent
+other configured markets from being processed.
 
 The bot and dashboard have separate roles:
 
@@ -190,7 +210,12 @@ The bot and dashboard have separate roles:
   environment that created them.
 - `transactions.jsonl` contains the persistent filled-order history.
 - `bot_status.json` contains the latest available USDT and market prices used by
-  the dashboard. It is refreshed after each bot analysis cycle.
+  the dashboard. It also contains the latest market watchlist. The watchlist is
+  refreshed from Binance every 15 minutes and screens positively moving USDT
+  pairs with at least 30 million USDT in rolling 24-hour volume, ranked by their
+  24-hour price range.
+- `bot_config.json` contains dashboard-confirmed target symbols and maximum total
+  USDT exposure. It contains no API credentials.
 
 The bot begins recording transactions after this feature is installed. Orders
 placed before then are not present in `transactions.jsonl` and cannot appear in
@@ -207,3 +232,6 @@ deactivate
 This project is for educational and informational purposes. Its signals are
 based on simple technical rules and are not financial advice. Test and validate
 any strategy independently before risking funds.
+
+Dashboard watchlist candidates are volatility observations, not buy signals or
+profit forecasts. High volatility can produce rapid losses as well as gains.
