@@ -172,6 +172,8 @@ The browser dashboard refreshes every five seconds and displays:
 - A sticky top summary bar with available USDT, open-position count, maximum
   per-trade amount, maximum total exposure, today's realized P&L, total realized
   P&L, and compact symbol/status tags
+- Color-coded market-check cards that flash after each new bot cycle and show
+  price, RSI, ATR, support, resistance, signal, suggested SL/TP, and bot status
 - Every currently tracked position and its stop-loss/take-profit levels
 - Available free USDT reported by the running bot
 - Current-price progress between stop loss, entry, and take profit

@@ -176,6 +176,14 @@ def analyze_market(client, symbol, interval):
     }
 
 
+def market_signal(analysis):
+    if analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2:
+        return "BUY SIGNAL"
+    if analysis["rsi"] >= 65:
+        return "SELL SIGNAL"
+    return "NEUTRAL"
+
+
 def load_positions():
     if not STATE_FILE.exists():
         return {}
@@ -225,6 +233,12 @@ def save_status(
             symbol: {
                 "price": analysis["entry"],
                 "rsi": analysis["rsi"],
+                "atr": analysis["atr"],
+                "support": analysis["support"],
+                "resistance": analysis["resistance"],
+                "suggested_sl": analysis["sl"],
+                "suggested_tp": analysis["tp"],
+                "signal": market_signal(analysis),
                 "status": market_statuses.get(symbol, "UNKNOWN"),
             }
             for symbol, analysis in analyses.items()
@@ -541,12 +555,7 @@ def decide_and_trade(
 
 
 def print_report(symbol, analysis):
-    if analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2:
-        verdict = "BUY SIGNAL"
-    elif analysis["rsi"] >= 65:
-        verdict = "SELL SIGNAL / NO LONG ENTRY"
-    else:
-        verdict = "NEUTRAL"
+    verdict = market_signal(analysis)
     print("=" * 72)
     print(f"{symbol} | Price: {analysis['entry']:.8f} | RSI: {analysis['rsi']:.2f}")
     print(f"ATR: {analysis['atr']:.8f} | Support: {analysis['support']:.8f}")

@@ -62,6 +62,25 @@ st.markdown(
     .hold-banner {padding:.55rem .75rem;margin-bottom:.5rem;border-radius:.5rem;
       background:#7c2d12;color:#ffedd5;border:1px solid #f97316;
       font-size:1.05rem;font-weight:900;text-align:center;letter-spacing:.04em}
+    .market-check-card {padding:.62rem .72rem;margin-bottom:.45rem;border-radius:.65rem;
+      background:#0f172a;border:1px solid #475569;min-height:9.2rem}
+    .market-check-buy {border-color:#22c55e;background:linear-gradient(135deg,#052e16,#0f172a)}
+    .market-check-sell,.market-check-error {border-color:#ef4444;background:linear-gradient(135deg,#450a0a,#0f172a)}
+    .market-check-monitoring {border-color:#38bdf8;background:linear-gradient(135deg,#082f49,#0f172a)}
+    .market-check-neutral {border-color:#eab308;background:linear-gradient(135deg,#422006,#0f172a)}
+    .market-check-head {display:flex;justify-content:space-between;align-items:center;gap:.4rem}
+    .market-check-symbol {color:#f8fafc;font-size:1.08rem;font-weight:900;letter-spacing:.04em}
+    .market-check-status {padding:.18rem .42rem;border-radius:999px;background:#020617;
+      color:#e2e8f0;font-size:.7rem;font-weight:800;white-space:nowrap}
+    .market-check-signal {margin:.25rem 0;color:#fde68a;font-size:.78rem;font-weight:900}
+    .market-check-grid {display:grid;grid-template-columns:repeat(2,1fr);gap:.22rem .65rem}
+    .market-check-stat {color:#94a3b8;font-size:.7rem;text-transform:uppercase;font-weight:700}
+    .market-check-stat span {display:block;color:#e2e8f0;font-size:.78rem;
+      text-transform:none;font-weight:800}
+    @keyframes market-cycle-flash {0%{filter:brightness(2);transform:scale(1.015);
+      box-shadow:0 0 22px currentColor}100%{filter:brightness(1);transform:scale(1);
+      box-shadow:none}}
+    .market-check-flash {animation:market-cycle-flash 1.15s ease-out}
     @media(max-width:900px){.summary-grid{grid-template-columns:repeat(2,1fr)}}
     </style>
     """,
@@ -481,6 +500,91 @@ def status_tags_html(target_symbols, market_statuses):
     return "".join(tags)
 
 
+def format_market_number(value, decimals=8):
+    if value is None:
+        return "N/A"
+    try:
+        return f"{float(value):,.{decimals}f}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+@st.fragment(run_every=5)
+def render_market_check_cards():
+    status = read_json(STATUS_FILE, {})
+    markets = status.get("markets", {})
+    target_symbols = status.get("target_symbols", [])
+    updated_at = status.get("updated_at")
+    previous_update = st.session_state.get("market_cards_updated_at")
+    should_flash = updated_at is not None and updated_at != previous_update
+    st.session_state["market_cards_updated_at"] = updated_at
+
+    if not target_symbols:
+        return
+
+    if updated_at:
+        update_age = max(0, int(datetime.now().timestamp() - float(updated_at)))
+        checked_at = datetime.fromtimestamp(updated_at).astimezone().strftime("%H:%M:%S")
+        if update_age > 150:
+            st.error(
+                f"BOT STATUS STALE - no completed market check for "
+                f"{update_age // 60} minute(s). Confirm that app.py is running."
+            )
+        trading_mode = (
+            "TRADING ACTIVE" if status.get("trading_enabled") else "ANALYSIS ONLY"
+        )
+        st.caption(
+            f"Latest market check: {checked_at} | "
+            f"{str(status.get('environment', 'unknown')).upper()} | "
+            f"{trading_mode} | Candle interval: {status.get('interval', 'N/A')}"
+        )
+    else:
+        st.warning("WAITING FOR BOT STATUS - start app.py to receive market checks.")
+
+    for start in range(0, len(target_symbols), 3):
+        columns = st.columns(3, gap="small")
+        for column, symbol in zip(columns, target_symbols[start : start + 3]):
+            market = markets.get(symbol, {})
+            market_status = str(
+                market.get("status")
+                or status.get("market_statuses", {}).get(symbol, "CHECK PENDING")
+            )
+            signal = str(market.get("signal", "CHECK PENDING"))
+            if "ERROR" in market_status:
+                color_class = "market-check-error"
+            elif "BUY" in signal:
+                color_class = "market-check-buy"
+            elif "SELL" in signal:
+                color_class = "market-check-sell"
+            elif market_status == "MONITORING":
+                color_class = "market-check-monitoring"
+            else:
+                color_class = "market-check-neutral"
+            flash_class = "market-check-flash" if should_flash else ""
+            with column:
+                st.markdown(
+                    f"""
+                    <div class="market-check-card {color_class} {flash_class}">
+                      <div class="market-check-head">
+                        <span class="market-check-symbol">{html.escape(symbol)}</span>
+                        <span class="market-check-status">{html.escape(market_status)}</span>
+                      </div>
+                      <div class="market-check-signal">{html.escape(signal)}</div>
+                      <div class="market-check-grid">
+                        <div class="market-check-stat">Price<span>{format_market_number(market.get('price'))}</span></div>
+                        <div class="market-check-stat">RSI<span>{format_market_number(market.get('rsi'), 2)}</span></div>
+                        <div class="market-check-stat">ATR<span>{format_market_number(market.get('atr'))}</span></div>
+                        <div class="market-check-stat">Support<span>{format_market_number(market.get('support'))}</span></div>
+                        <div class="market-check-stat">Resistance<span>{format_market_number(market.get('resistance'))}</span></div>
+                        <div class="market-check-stat">Suggested SL<span>{format_market_number(market.get('suggested_sl'))}</span></div>
+                        <div class="market-check-stat">Suggested TP<span>{format_market_number(market.get('suggested_tp'))}</span></div>
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+
 @st.fragment(run_every=5)
 def render_top_bar():
     state = read_state()
@@ -609,5 +713,6 @@ def render_dashboard():
 
 
 render_top_bar()
+render_market_check_cards()
 render_settings_panel()
 render_dashboard()
