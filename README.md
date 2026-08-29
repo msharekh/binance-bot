@@ -221,6 +221,8 @@ The browser dashboard refreshes every five seconds and displays:
   rates, total realized P&L, and the active interval
 - Color-coded market-check cards that flash after each new bot cycle and show
   price, RSI, ATR, support, resistance, signal, suggested SL/TP, and bot status
+- A four-item checklist on every market card that highlights passed buy checks
+  in green and remaining checks in red
 - Live card prices and open-position progress refreshed every 10 seconds, with
   up/down direction indicators; indicator calculations still use the selected
   completed-candle interval

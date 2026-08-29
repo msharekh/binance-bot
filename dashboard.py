@@ -40,11 +40,16 @@ INTERVAL_MINUTES = {
 }
 
 st.set_page_config(page_title="Binance Bot Dashboard", page_icon="📈", layout="wide")
-st.title("Binance Market Bot Dashboard")
+st.markdown(
+    '<h1 class="dashboard-title">Binance Market Bot Dashboard</h1>',
+    unsafe_allow_html=True,
+)
 st.caption("Binance Spot · refreshes every 5 seconds")
 st.markdown(
     """
     <style>
+    .dashboard-title {font-size:1.65rem!important;line-height:1.15!important;
+      margin:.1rem 0 .05rem!important;padding:0!important}
     .symbol-title {color:#38bdf8;font-size:1.18rem;font-weight:800;letter-spacing:.03em}
     .target-tag {display:inline-block;padding:.28rem .58rem;margin:.12rem;border-radius:999px;
       background:#172554;color:#bfdbfe;border:1px solid #2563eb;font-weight:700}
@@ -93,7 +98,7 @@ st.markdown(
       font-size:1.05rem;font-weight:900;text-align:center;letter-spacing:.04em}
     .market-check-row {display:flex;gap:.3rem;overflow-x:auto;padding-bottom:.18rem;
       scrollbar-width:thin}
-    .market-check-card {flex:0 0 175px;padding:.34rem .42rem;margin-bottom:.2rem;
+    .market-check-card {flex:0 0 225px;padding:.34rem .42rem;margin-bottom:.2rem;
       border-radius:.5rem;background:#0f172a;border:1px solid #475569}
     .market-check-buy {border-color:#22c55e;background:linear-gradient(135deg,#052e16,#0f172a)}
     .market-check-sell,.market-check-error {border-color:#ef4444;background:linear-gradient(135deg,#450a0a,#0f172a)}
@@ -105,6 +110,12 @@ st.markdown(
       color:#e2e8f0;font-size:.62rem;font-weight:800;white-space:nowrap;
       max-width:56%;overflow:hidden;text-overflow:ellipsis}
     .market-check-signal {margin:.14rem 0;color:#fde68a;font-size:.7rem;font-weight:900}
+    .buy-check-list {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:.2rem;margin:.2rem 0 .3rem}
+    .buy-check {padding:.2rem .28rem;border-radius:.3rem;font-size:.62rem;
+      font-weight:850;line-height:1.15;border:1px solid;white-space:normal}
+    .buy-check-pass {color:#bbf7d0;background:#052e16;border-color:#16a34a}
+    .buy-check-wait {color:#fecaca;background:#450a0a;border-color:#ef4444}
     .market-check-grid {display:grid;grid-template-columns:repeat(2,1fr);gap:.22rem .65rem}
     .market-check-stat {color:#94a3b8;font-size:.62rem;text-transform:uppercase;font-weight:700}
     .market-check-stat span {display:block;color:#e2e8f0;font-size:.72rem;
@@ -820,6 +831,28 @@ def render_market_check_cards():
             if has_buy_checks
             else ""
         )
+        buy_check_html = ""
+        if has_buy_checks:
+            check_labels = (
+                ("rsi_recovered", "RSI recovery"),
+                ("near_support", "Near support"),
+                ("trend_ok", "Above trend EMA"),
+                ("reward_ok", "Reward target"),
+            )
+            check_items = []
+            for check_name, check_label in check_labels:
+                passed = bool(market.get(check_name))
+                check_class = "buy-check-pass" if passed else "buy-check-wait"
+                check_icon = "&#10003;" if passed else "&#10007;"
+                check_state = "PASSED" if passed else "REMAINING"
+                check_items.append(
+                    f'<div class="buy-check {check_class}" '
+                    f'title="{html.escape(check_label)}: {check_state}">'
+                    f'{check_icon} {html.escape(check_label)}</div>'
+                )
+            buy_check_html = (
+                f'<div class="buy-check-list">{"".join(check_items)}</div>'
+            )
         if "ERROR" in market_status:
             color_class = "market-check-error"
         elif "BUY" in signal:
@@ -839,6 +872,7 @@ def render_market_check_cards():
             f'{html.escape(market_status)}</span></div>'
             f'<div class="market-check-signal">'
             f'{html.escape(signal + buy_check_label)}</div>'
+            f'{buy_check_html}'
             f'<div class="market-check-grid">'
             f'<div class="market-check-stat">Price'
             f'<span class="{direction_class}">{direction_icon} '
