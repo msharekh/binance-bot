@@ -215,6 +215,7 @@ def _open_position_metrics(state, status, live_prices):
                 ),
                 "planned_risk_reward": _rounded(reward / risk, 2) if risk > 0 else None,
                 "rsi": _optional_rounded(market.get("rsi"), 2),
+                "previous_rsi": _optional_rounded(market.get("previous_rsi"), 2),
                 "atr_pct": _rounded(
                     _number(market.get("atr")) / current * 100 if current else 0, 3
                 ),
@@ -268,6 +269,19 @@ def _market_metrics(status, live_prices):
                 "suggested_take_profit": _optional_rounded(
                     market.get("suggested_tp"), 10
                 ),
+                "trend_interval": str(market.get("trend_interval", "unknown")),
+                "trend_ema_period": int(_number(market.get("trend_ema_period"))),
+                "trend_price": _optional_rounded(market.get("trend_price"), 10),
+                "trend_ema": _optional_rounded(market.get("trend_ema"), 10),
+                "expected_net_reward_pct": _optional_rounded(
+                    market.get("expected_net_reward_pct"), 3
+                ),
+                "buy_checks": {
+                    "rsi_recovered": bool(market.get("rsi_recovered", False)),
+                    "near_support": bool(market.get("near_support", False)),
+                    "trend_ok": bool(market.get("trend_ok", False)),
+                    "reward_ok": bool(market.get("reward_ok", False)),
+                },
                 "signal": str(market.get("signal", "unknown")),
                 "status": str(market.get("status", "unknown")),
                 "live_direction_10s": str(live_market.get("direction", "unknown")),
@@ -318,11 +332,29 @@ def build_snapshot():
             "trading_enabled": bool(status.get("trading_enabled", False)),
         },
         "strategy": {
-            "buy_rsi_max": 35,
-            "sell_rsi_min": 65,
-            "max_support_distance_pct": 0.2,
-            "stop_loss_atr_multiple": 1.5,
-            "take_profit_reward_to_risk": 2.0,
+            "buy_rsi_recovery": _rounded(
+                config.get("buy_rsi_recovery", 35), 2
+            ),
+            "max_support_distance_pct": _rounded(
+                config.get("max_support_distance_pct", 0.30), 3
+            ),
+            "trend_interval": str(config.get("trend_interval", "1h")),
+            "trend_ema_period": int(_number(config.get("trend_ema_period", 50))),
+            "min_net_reward_pct": _rounded(
+                config.get("min_net_reward_pct", 0.50), 3
+            ),
+            "estimated_round_trip_fee_pct": _rounded(
+                config.get("estimated_round_trip_fee_pct", 0.20), 3
+            ),
+            "sell_rsi_threshold": _rounded(
+                config.get("sell_rsi_threshold", 65), 2
+            ),
+            "stop_loss_atr_multiple": _rounded(
+                config.get("atr_sl_multiplier", 1.5), 2
+            ),
+            "take_profit_reward_to_risk": _rounded(
+                config.get("risk_reward_ratio", 2.0), 2
+            ),
         },
         "market_checks": _market_metrics(status, live_prices),
         "portfolio": {

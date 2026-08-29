@@ -33,6 +33,11 @@ INTERVAL_OPTIONS = [
     "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h",
     "12h", "1d", "3d", "1w", "1M",
 ]
+INTERVAL_MINUTES = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
+    "12h": 720, "1d": 1440, "3d": 4320, "1w": 10080, "1M": 43200,
+}
 
 st.set_page_config(page_title="Binance Bot Dashboard", page_icon="📈", layout="wide")
 st.title("Binance Multi-Market Bot Dashboard - Version 2")
@@ -72,7 +77,7 @@ st.markdown(
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
       margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
-    .summary-grid {display:grid;grid-template-columns:repeat(9,minmax(100px,1fr));gap:.45rem}
+    .summary-grid {display:grid;grid-template-columns:repeat(12,minmax(90px,1fr));gap:.45rem}
     .summary-item {padding:.42rem .55rem;border-radius:.5rem;background:#0f172a}
     .summary-label {color:#cbd5e1;font-size:.9rem;text-transform:uppercase;font-weight:800}
     .summary-value {color:#f8fafc;font-size:1.5rem;font-weight:900;line-height:1.2}
@@ -147,7 +152,7 @@ def read_transactions():
 
 def write_config(
     symbols, maximum_exposure, trade_amount, max_open_positions,
-    trading_on_hold, interval,
+    trading_on_hold, interval, strategy,
 ):
     temporary_file = CONFIG_FILE.with_suffix(".tmp")
     config = {
@@ -157,6 +162,7 @@ def write_config(
         "max_open_positions": max_open_positions,
         "trading_on_hold": trading_on_hold,
         "interval": interval,
+        **strategy,
         "updated_at": int(datetime.now().timestamp()),
     }
     temporary_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
@@ -195,72 +201,240 @@ def render_settings_panel():
     interval = str(config.get("interval") or status.get("interval", "15m"))
     if interval not in INTERVAL_OPTIONS:
         interval = "15m"
+    status_strategy = status.get("strategy", {})
+
+    def strategy_value(name, default):
+        return config[name] if name in config else status_strategy.get(name, default)
+
+    buy_rsi_recovery = float(strategy_value("buy_rsi_recovery", 35))
+    max_support_distance_pct = float(
+        strategy_value("max_support_distance_pct", 0.30)
+    )
+    trend_interval = str(strategy_value("trend_interval", "1h"))
+    if trend_interval not in INTERVAL_OPTIONS:
+        trend_interval = "1h"
+    trend_ema_period = int(strategy_value("trend_ema_period", 50))
+    min_net_reward_pct = float(strategy_value("min_net_reward_pct", 0.50))
+    estimated_round_trip_fee_pct = float(
+        strategy_value("estimated_round_trip_fee_pct", 0.20)
+    )
+    atr_sl_multiplier = float(strategy_value("atr_sl_multiplier", 1.5))
+    risk_reward_ratio = float(strategy_value("risk_reward_ratio", 2.0))
+    sell_rsi_threshold = float(strategy_value("sell_rsi_threshold", 65))
     suggested_symbols = [
         str(suggestion.get("symbol", "")).strip().upper()
         for suggestion in status.get("suggestions", [])
         if suggestion.get("symbol")
     ]
     symbol_options = list(dict.fromkeys(list(symbols) + suggested_symbols))
-    with st.expander("Trading targets and exposure", expanded=False):
+    with st.expander("Trading controls", expanded=False):
+        saved_notice = st.session_state.pop("trading_controls_notice", None)
+        if saved_notice:
+            st.success(saved_notice)
         st.caption(
-            f"Per trade: {float(trade_amount):,.2f} USDT | "
-            f"Total exposure: {float(maximum):,.2f} USDT | "
-            f"Max positions: {max_open_positions} | "
-            f"Interval: {interval} | "
-            f"Targets: {', '.join(symbols) if symbols else 'not reported yet'}"
+            f"{float(trade_amount):,.2f} USDT/trade · "
+            f"{float(maximum):,.2f} exposure · "
+            f"{max_open_positions} positions · {interval} · {len(symbols)} targets"
         )
+        st.caption(
+            f"Buy: RSI ↑ {buy_rsi_recovery:g} · support ≤ "
+            f"{max_support_distance_pct:.2f}% · {trend_interval} EMA "
+            f"{trend_ema_period} · net TP ≥ {min_net_reward_pct:.2f}%"
+        )
+        st.caption(
+            f"Sell: SL {atr_sl_multiplier:g} ATR · TP {risk_reward_ratio:g}R · "
+            f"RSI ≥ {sell_rsi_threshold:g}"
+        )
+        with st.form("quick_add_target", clear_on_submit=True):
+            add_symbol_column, add_button_column = st.columns([3, 1])
+            with add_symbol_column:
+                quick_symbol = st.text_input(
+                    "Quick add target",
+                    placeholder="DEXEUSDT",
+                    help="Enter one complete USDT Spot symbol.",
+                )
+            with add_button_column:
+                st.write("")
+                quick_add_confirmed = st.form_submit_button(
+                    "Add", width="stretch"
+                )
+
+        if quick_add_confirmed:
+            normalized_symbol = quick_symbol.strip().upper()
+            if not re.fullmatch(r"[A-Z0-9]+USDT", normalized_symbol):
+                st.error("Enter a complete USDT symbol, for example DEXEUSDT.")
+            elif normalized_symbol in symbols:
+                st.info(f"{normalized_symbol} is already selected.")
+            else:
+                write_config(
+                    list(symbols) + [normalized_symbol],
+                    float(maximum),
+                    float(trade_amount),
+                    max_open_positions,
+                    trading_on_hold,
+                    interval,
+                    {
+                        "buy_rsi_recovery": str(buy_rsi_recovery),
+                        "max_support_distance_pct": str(
+                            max_support_distance_pct
+                        ),
+                        "trend_interval": trend_interval,
+                        "trend_ema_period": trend_ema_period,
+                        "min_net_reward_pct": str(min_net_reward_pct),
+                        "estimated_round_trip_fee_pct": str(
+                            estimated_round_trip_fee_pct
+                        ),
+                        "atr_sl_multiplier": str(atr_sl_multiplier),
+                        "risk_reward_ratio": str(risk_reward_ratio),
+                        "sell_rsi_threshold": str(sell_rsi_threshold),
+                    },
+                )
+                st.session_state["trading_controls_notice"] = (
+                    f"{normalized_symbol} added. The bot will load it next cycle."
+                )
+                st.rerun()
+
         with st.form("runtime_settings"):
-            trade_column, exposure_column = st.columns(2)
-            with trade_column:
-                trade_amount_input = st.number_input(
-                    "Per-trade amount (USDT)",
-                    min_value=1.0,
-                    value=float(trade_amount),
-                    step=1.0,
-                    help="Maximum USDT requested for one new buy.",
-                )
-            with exposure_column:
-                maximum_input = st.number_input(
-                    "Maximum total exposure (USDT)",
-                    min_value=1.0,
-                    value=float(maximum),
-                    step=1.0,
-                    help="Combined original entry value allowed across positions.",
-                )
-            positions_column, interval_column = st.columns(2)
-            with positions_column:
-                max_open_positions_input = st.number_input(
-                    "Maximum open positions",
-                    min_value=1,
-                    value=max_open_positions,
-                    step=1,
-                    help="Maximum number of symbols held at the same time.",
-                )
-            with interval_column:
-                interval_input = st.selectbox(
-                    "Candle interval",
-                    INTERVAL_OPTIONS,
-                    index=INTERVAL_OPTIONS.index(interval),
-                    help="Timeframe used to calculate indicators and buy signals.",
-                )
-            symbols_input = st.multiselect(
-                "Targeted Spot symbols",
-                options=symbol_options,
-                default=symbols,
-                accept_new_options=True,
-                placeholder="Type BTCUSDT, then press Enter",
-                help=(
-                    "Type a complete USDT pair and press Enter to add it. "
-                    "Select × on a tag to remove it."
-                ),
+            limits_tab, buy_tab, sell_tab, targets_tab = st.tabs(
+                ["Limits", "Buy", "Sell", "Targets"]
             )
-            hold_input = st.toggle(
-                "Hold new buys",
-                value=trading_on_hold,
-                help="Existing positions remain monitored and can still be sold.",
-            )
+            with limits_tab:
+                st.caption("Capital limits and the completed-candle interval.")
+                trade_column, exposure_column = st.columns(2)
+                with trade_column:
+                    trade_amount_input = st.number_input(
+                        "USDT per trade",
+                        min_value=1.0,
+                        value=float(trade_amount),
+                        step=1.0,
+                        help="Maximum USDT requested for one new buy.",
+                    )
+                with exposure_column:
+                    maximum_input = st.number_input(
+                        "Total exposure",
+                        min_value=1.0,
+                        value=float(maximum),
+                        step=1.0,
+                        help="Combined original entry value allowed across positions.",
+                    )
+                positions_column, interval_column = st.columns(2)
+                with positions_column:
+                    max_open_positions_input = st.number_input(
+                        "Max positions",
+                        min_value=1,
+                        value=max_open_positions,
+                        step=1,
+                    )
+                with interval_column:
+                    interval_input = st.selectbox(
+                        "Trade interval",
+                        INTERVAL_OPTIONS,
+                        index=INTERVAL_OPTIONS.index(interval),
+                        help="Timeframe for RSI, ATR, and support.",
+                    )
+            with buy_tab:
+                st.caption("All four checks must pass before a new buy.")
+                rsi_column, support_column = st.columns(2)
+                with rsi_column:
+                    buy_rsi_recovery_input = st.number_input(
+                        "RSI recovery",
+                        min_value=1.0,
+                        max_value=50.0,
+                        value=buy_rsi_recovery,
+                        step=1.0,
+                        help="RSI must cross upward through this level.",
+                    )
+                with support_column:
+                    max_support_distance_input = st.number_input(
+                        "Support distance %",
+                        min_value=0.0,
+                        max_value=5.0,
+                        value=max_support_distance_pct,
+                        step=0.05,
+                        format="%.2f",
+                    )
+                trend_column, ema_column = st.columns(2)
+                with trend_column:
+                    trend_interval_input = st.selectbox(
+                        "Trend interval",
+                        INTERVAL_OPTIONS,
+                        index=INTERVAL_OPTIONS.index(trend_interval),
+                        help="Must be equal to or longer than the trade interval.",
+                    )
+                with ema_column:
+                    trend_ema_period_input = st.number_input(
+                        "EMA period",
+                        min_value=10,
+                        max_value=500,
+                        value=trend_ema_period,
+                        step=10,
+                    )
+                reward_column, fee_column = st.columns(2)
+                with reward_column:
+                    min_net_reward_input = st.number_input(
+                        "Minimum net TP %",
+                        min_value=0.0,
+                        max_value=20.0,
+                        value=min_net_reward_pct,
+                        step=0.10,
+                        format="%.2f",
+                    )
+                with fee_column:
+                    estimated_fee_input = st.number_input(
+                        "Fees + slippage %",
+                        min_value=0.0,
+                        max_value=5.0,
+                        value=estimated_round_trip_fee_pct,
+                        step=0.05,
+                        format="%.2f",
+                        help="Estimated combined buy and sell cost.",
+                    )
+
+            with sell_tab:
+                st.caption("Protection settings and the indicator exit.")
+                stop_column, ratio_column = st.columns(2)
+                with stop_column:
+                    atr_sl_multiplier_input = st.number_input(
+                        "Stop distance (ATR)",
+                        min_value=0.1,
+                        max_value=10.0,
+                        value=atr_sl_multiplier,
+                        step=0.1,
+                        format="%.2f",
+                    )
+                with ratio_column:
+                    risk_reward_ratio_input = st.number_input(
+                        "TP reward/risk",
+                        min_value=0.1,
+                        max_value=10.0,
+                        value=risk_reward_ratio,
+                        step=0.1,
+                        format="%.2f",
+                    )
+                sell_rsi_threshold_input = st.number_input(
+                    "RSI exit level",
+                    min_value=50.0,
+                    max_value=99.0,
+                    value=sell_rsi_threshold,
+                    step=1.0,
+                )
+                st.caption("SL = entry − ATR distance · TP = entry + stop × reward/risk")
+            with targets_tab:
+                st.caption("Add or remove USDT Spot markets.")
+                symbols_input = st.multiselect(
+                    "Target symbols",
+                    options=symbol_options,
+                    default=symbols,
+                    placeholder="Selected markets",
+                    help="Select the x on a tag to remove it, then save all controls.",
+                )
+                hold_input = st.toggle(
+                    "Pause new buys",
+                    value=trading_on_hold,
+                    help="Existing positions remain monitored and can still be sold.",
+                )
             confirmed = st.form_submit_button(
-                "Save and confirm settings", type="primary", width="stretch"
+                "Save all controls", type="primary", width="stretch"
             )
 
         if confirmed:
@@ -282,10 +456,30 @@ def render_settings_panel():
                 st.error("Invalid USDT symbols: " + ", ".join(invalid))
             elif trade_amount_input > maximum_input:
                 st.error("Per-trade amount cannot exceed maximum total exposure.")
+            elif (
+                INTERVAL_MINUTES[trend_interval_input]
+                < INTERVAL_MINUTES[interval_input]
+            ):
+                st.error("Larger-trend interval cannot be shorter than candle interval.")
             else:
                 write_config(
                     parsed_symbols, maximum_input, trade_amount_input,
                     max_open_positions_input, hold_input, interval_input,
+                    {
+                        "buy_rsi_recovery": str(buy_rsi_recovery_input),
+                        "max_support_distance_pct": str(
+                            max_support_distance_input
+                        ),
+                        "trend_interval": trend_interval_input,
+                        "trend_ema_period": int(trend_ema_period_input),
+                        "min_net_reward_pct": str(min_net_reward_input),
+                        "estimated_round_trip_fee_pct": str(
+                            estimated_fee_input
+                        ),
+                        "atr_sl_multiplier": str(atr_sl_multiplier_input),
+                        "risk_reward_ratio": str(risk_reward_ratio_input),
+                        "sell_rsi_threshold": str(sell_rsi_threshold_input),
+                    },
                 )
                 st.success(
                     "Settings saved. The bot will load them at the next analysis cycle."
@@ -405,8 +599,9 @@ def render_market_suggestions(status):
     suggestions = status.get("suggestions", [])
     with st.expander("Six Spot watchlist candidates", expanded=False):
         st.caption(
-            "Read-only screen: positive 24h momentum, at least 30M USDT volume, "
-            "then ranked by 24h range. This is not a profit guarantee or a buy signal."
+            "Read-only screen: stablecoins excluded; requires +0.5% change, "
+            "1.5% range, and 30M USDT volume, then ranks by range. "
+            "This is not a profit guarantee or a buy signal."
         )
         if not suggestions:
             st.info("Suggestions will appear after the bot refreshes Binance market data.")
@@ -612,6 +807,13 @@ def render_market_check_cards():
             or status.get("market_statuses", {}).get(symbol, "CHECK PENDING")
         )
         signal = str(market.get("signal", "CHECK PENDING"))
+        buy_check_names = ("rsi_recovered", "near_support", "trend_ok", "reward_ok")
+        has_buy_checks = any(name in market for name in buy_check_names)
+        buy_check_label = (
+            f" · {sum(bool(market.get(name)) for name in buy_check_names)}/4 CHECKS"
+            if has_buy_checks
+            else ""
+        )
         if "ERROR" in market_status:
             color_class = "market-check-error"
         elif "BUY" in signal:
@@ -629,7 +831,8 @@ def render_market_check_cards():
             f'<span class="market-check-symbol">{html.escape(symbol)}</span>'
             f'<span class="market-check-status" title="{html.escape(market_status)}">'
             f'{html.escape(market_status)}</span></div>'
-            f'<div class="market-check-signal">{html.escape(signal)}</div>'
+            f'<div class="market-check-signal">'
+            f'{html.escape(signal + buy_check_label)}</div>'
             f'<div class="market-check-grid">'
             f'<div class="market-check-stat">Price'
             f'<span class="{direction_class}">{direction_icon} '
@@ -648,6 +851,11 @@ def render_market_check_cards():
             f'{format_market_number(market.get("suggested_sl"))}</span></div>'
             f'<div class="market-check-stat">Suggested TP<span>'
             f'{format_market_number(market.get("suggested_tp"))}</span></div>'
+            f'<div class="market-check-stat">Trend EMA<span>'
+            f'{format_market_number(market.get("trend_ema"))}</span></div>'
+            f'<div class="market-check-stat">Net TP reward<span>'
+            f'{format_market_number(market.get("expected_net_reward_pct"), 3)}%'
+            f'</span></div>'
             f'</div></details></div>'
         )
     st.markdown(
@@ -751,6 +959,8 @@ def render_top_bar():
     history = transaction_frame(read_transactions())
     positions = state.get("positions", {})
     available = status.get("available_usdt")
+    binance_portfolio = status.get("total_portfolio_usdt")
+    unpriced_assets = status.get("portfolio_unpriced_assets", [])
     maximum = config.get("max_total_exposure_usdt") or status.get(
         "max_total_exposure_usdt", "75"
     )
@@ -768,15 +978,23 @@ def render_top_bar():
     today_pnl = 0.0
     today_unrealized_pnl = 0.0
     usdt_in_trades = 0.0
+    today_win_rate = None
+    all_win_rate = None
     if not history.empty:
         sells = history[history["Side"] == "SELL"]
         total_pnl = float(sells["Est. P&L (USDT)"].sum())
-        today_pnl = float(
-            sells.loc[
-                sells["Time"].dt.date == datetime.now().astimezone().date(),
-                "Est. P&L (USDT)",
-            ].sum()
-        )
+        today_sells = sells[
+            sells["Time"].dt.date == datetime.now().astimezone().date()
+        ]
+        today_pnl = float(today_sells["Est. P&L (USDT)"].sum())
+        if not today_sells.empty:
+            today_win_rate = float(
+                (today_sells["Est. P&L (USDT)"].fillna(0) > 0).mean() * 100
+            )
+        if not sells.empty:
+            all_win_rate = float(
+                (sells["Est. P&L (USDT)"].fillna(0) > 0).mean() * 100
+            )
     status_markets = status.get("markets", {})
     for symbol, position in positions.items():
         try:
@@ -816,13 +1034,32 @@ def render_top_bar():
     )
     total_class = "pnl-positive" if total_pnl >= 0 else "pnl-negative"
     available_text = f"{float(available):,.2f}" if available is not None else "N/A"
-    total_portfolio_text = (
+    tracked_total_text = (
         f"{float(available) + usdt_in_trades:,.2f}"
         if available is not None
         else "N/A"
     )
+    binance_portfolio_text = (
+        f"{float(binance_portfolio):,.2f}"
+        if binance_portfolio is not None
+        else "N/A"
+    )
+    binance_portfolio_note = (
+        "All nonzero Spot balances converted to USDT, including locked assets."
+        + (
+            " Unpriced assets excluded: " + ", ".join(map(str, unpriced_assets))
+            if unpriced_assets
+            else ""
+        )
+    )
     trade_amount_text = (
         f"{float(trade_amount):,.2f}" if trade_amount is not None else "N/A"
+    )
+    today_win_rate_text = (
+        f"{today_win_rate:.1f}%" if today_win_rate is not None else "N/A"
+    )
+    all_win_rate_text = (
+        f"{all_win_rate:.1f}%" if all_win_rate is not None else "N/A"
     )
     hold_banner = (
         '<div class="hold-banner">TRADING ON HOLD &mdash; NEW BUYS PAUSED; '
@@ -837,12 +1074,15 @@ def render_top_bar():
           <div class="summary-grid">
             <div class="summary-item"><div class="summary-label">Available USDT</div><div class="summary-value">{available_text}</div></div>
             <div class="summary-item" title="Current market price multiplied by tracked quantity for all open positions"><div class="summary-label">USDT in trades</div><div class="summary-value">{usdt_in_trades:,.2f}</div></div>
-            <div class="summary-item" title="Available USDT plus the current market value of all tracked open positions"><div class="summary-label">Total portfolio USDT</div><div class="summary-value">{total_portfolio_text}</div></div>
+            <div class="summary-item" title="Available USDT plus the current market value of bot-tracked open positions"><div class="summary-label">Bot tracked total</div><div class="summary-value">{tracked_total_text}</div></div>
+            <div class="summary-item" title="{html.escape(binance_portfolio_note)}"><div class="summary-label">Binance Spot total</div><div class="summary-value">{binance_portfolio_text}</div></div>
             <div class="summary-item"><div class="summary-label">Open / max positions</div><div class="summary-value">{len(positions)} / {max_open_positions}</div></div>
             <div class="summary-item"><div class="summary-label">Per-trade max</div><div class="summary-value">{trade_amount_text}</div></div>
             <div class="summary-item"><div class="summary-label">Max total exposure</div><div class="summary-value">{float(maximum):,.2f}</div></div>
             <div class="summary-item"><div class="summary-label">Today realized P&amp;L</div><div class="summary-value {today_class}">{today_pnl:+,.4f}</div></div>
             <div class="summary-item" title="Current mark-to-entry P&amp;L for all open positions"><div class="summary-label">Today unrealized P&amp;L</div><div class="summary-value {today_unrealized_class}">{today_unrealized_pnl:+,.4f}</div></div>
+            <div class="summary-item" title="Profitable completed sells divided by all completed sells today"><div class="summary-label">Today win rate</div><div class="summary-value">{today_win_rate_text}</div></div>
+            <div class="summary-item" title="Profitable completed sells divided by all recorded completed sells"><div class="summary-label">All win rate</div><div class="summary-value">{all_win_rate_text}</div></div>
             <div class="summary-item"><div class="summary-label">Total realized P&amp;L</div><div class="summary-value {total_class}">{total_pnl:+,.4f}</div></div>
           </div>
           <div class="summary-tags">{tags}</div>

@@ -5,10 +5,12 @@ place market orders on Binance Spot.
 
 ## What it does
 
-- Downloads the latest 100 one-minute candles from Binance.
+- Downloads completed candles for the selected trading interval from Binance.
 - Calculates 14-period RSI and ATR indicators.
 - Estimates support and resistance from the latest 20 candles.
-- Buys a fixed USDT amount when RSI is oversold or price is near support.
+- Buys only after RSI recovers upward through its threshold while price is near
+  support, the higher-timeframe price is above its EMA, and expected TP reward
+  remains above the configured minimum after estimated fees.
 - Sells the tracked position at its stop loss, take profit, or RSI sell signal.
 - Uses a 1:2 risk/reward ratio and a stop distance of 1.5 ATR.
 - Monitors `BTCUSDT`, `ETHUSDT`, and `TRXUSDT` by default.
@@ -212,9 +214,11 @@ http://localhost:8501
 The browser dashboard refreshes every five seconds and displays:
 
 - A sticky top summary bar with available USDT, current USDT market value across
-  open trades, their combined total portfolio value, open-position count,
-  maximum per-trade amount, maximum total exposure, today's realized P&L, current
-  unrealized P&L for open positions, total realized P&L, and the active interval
+  open trades, their combined bot-tracked value, the Binance-wide Spot portfolio
+  estimate, open-position count, maximum per-trade amount, maximum total
+  exposure, today's realized P&L, current
+  unrealized P&L for open positions, today's and all-time completed-trade win
+  rates, total realized P&L, and the active interval
 - Color-coded market-check cards that flash after each new bot cycle and show
   price, RSI, ATR, support, resistance, signal, suggested SL/TP, and bot status
 - Live card prices and open-position progress refreshed every 10 seconds, with
@@ -246,17 +250,24 @@ The browser dashboard refreshes every five seconds and displays:
 
 ### Change targets and maximum exposure from the dashboard
 
-Open **Trading targets and exposure** under **Bot controls** in the sidebar. It shows
-the current trade amount, maximum total exposure, candle interval, and targeted
-symbols. Enter:
+Open **Trading controls** under **Bot controls** in the sidebar. The compact form
+is organized into **Limits**, **Buy**, **Sell**, and **Targets** tabs, with one
+shared save button. Configure:
 
 - A per-trade maximum amount in USDT
 - A maximum combined entry exposure in USDT
 - A maximum number of simultaneously open positions
 - A candle interval from the dropdown: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`,
   `2h`, `4h`, `6h`, `8h`, `12h`, `1d`, `3d`, `1w`, or `1M`
-- Binance USDT Spot symbol tags such as `BTCUSDT`, `ETHUSDT`, and `SOLUSDT`;
-  type a pair and press Enter to add it, or select × to remove it
+- Buy confirmation controls: RSI recovery level, maximum distance from support,
+  higher-trend candle interval and EMA period, minimum net TP reward, and an
+  estimated round-trip fee/slippage percentage
+- Sell controls: ATR stop-loss multiplier, take-profit reward/risk ratio, and
+  RSI exit threshold. TP is always above entry:
+  `entry + (ATR × stop multiplier × reward/risk)`
+- Binance USDT Spot symbols such as `BTCUSDT`, `ETHUSDT`, and `SOLUSDT`; use
+  **Quick add target** and **Add** for reliable one-click insertion. To remove a
+  market, open **Targets**, select the x on its tag, and save all controls.
 - Optionally enable **Hold new buys** to pause new entries
 
 Select **Save and confirm settings**. The settings are written to
@@ -272,6 +283,12 @@ will not open another one until the count is below the new limit.
 Changing the candle interval affects the next market analysis and future entry
 signals. It does not recalculate the entry, stop loss, or take profit already
 stored for an open position.
+
+Changing the ATR stop multiplier or reward/risk ratio also applies only to
+future positions. The RSI sell threshold is evaluated for all monitored open
+positions on the next completed-candle analysis. The fee percentage is an
+entry-quality estimate; recorded P&L remains an estimate before actual Binance
+commissions.
 
 When **Hold new buys** is enabled, the dashboard shows a prominent orange hold
 banner. Existing positions remain monitored: stop-loss, take-profit, RSI exits,
@@ -307,10 +324,12 @@ The bot and dashboard have separate roles:
   environment that created them.
 - `transactions.jsonl` contains the persistent filled-order history.
 - `bot_status.json` contains the latest available USDT and market prices used by
-  the dashboard. It also contains the latest market watchlist. The watchlist is
-  refreshed from Binance every 15 minutes and screens positively moving USDT
-  pairs with at least 30 million USDT in rolling 24-hour volume, ranked by their
-  24-hour price range.
+  the dashboard. It also contains the Binance-wide Spot portfolio estimate and
+  any nonzero assets that could not be converted to USDT, plus the latest market
+  watchlist. The watchlist is
+  refreshed from Binance every 15 minutes, excludes stablecoin and leveraged
+  pairs, and requires at least +0.5% change, a 1.5% range, and 30 million USDT
+  in rolling 24-hour volume. Qualifying pairs are ranked by 24-hour range.
 - `bot_config.json` contains dashboard-confirmed target symbols and maximum total
   USDT exposure. It contains no API credentials.
 - `sell_requests.jsonl` is a short-lived local queue for confirmed dashboard

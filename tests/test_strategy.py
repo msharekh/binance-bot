@@ -1,0 +1,154 @@
+import json
+import unittest
+from decimal import Decimal
+from unittest.mock import patch
+
+import pandas as pd
+
+import app
+
+
+def make_klines(closes, low):
+    return [
+        [
+            index,
+            str(close),
+            str(close + 1),
+            str(low),
+            str(close),
+            "1",
+            index,
+            "1",
+            1,
+            "1",
+            "1",
+            "0",
+        ]
+        for index, close in enumerate(closes)
+    ]
+
+
+class FakeClient:
+    def __init__(self, support_low=99.9):
+        self.support_low = support_low
+
+    def get_klines(self, symbol, interval, limit):
+        if interval == "1h":
+            return make_klines(list(range(80, 80 + limit)), 79)
+        return make_klines([100] * limit, self.support_low)
+
+
+class FakeTickerClient:
+    def get_ticker(self):
+        return [
+            {
+                "symbol": "RLUSDUSDT", "quoteVolume": "130900000",
+                "priceChangePercent": "0.01", "weightedAvgPrice": "1.0004",
+                "highPrice": "1.0007", "lowPrice": "1.0001",
+                "lastPrice": "1.0004",
+            },
+            {
+                "symbol": "QUIETUSDT", "quoteVolume": "90000000",
+                "priceChangePercent": "0.8", "weightedAvgPrice": "10",
+                "highPrice": "10.05", "lowPrice": "9.95", "lastPrice": "10",
+            },
+            {
+                "symbol": "ACTIVEUSDT", "quoteVolume": "90000000",
+                "priceChangePercent": "3.2", "weightedAvgPrice": "10",
+                "highPrice": "10.4", "lowPrice": "9.8", "lastPrice": "10.2",
+            },
+        ]
+
+
+class FakePortfolioClient:
+    def get_account(self):
+        return {
+            "balances": [
+                {"asset": "USDT", "free": "100", "locked": "5"},
+                {"asset": "SOL", "free": "2", "locked": "0"},
+                {"asset": "ABC", "free": "10", "locked": "0"},
+                {"asset": "UNKNOWN", "free": "3", "locked": "0"},
+            ]
+        }
+
+    def get_all_tickers(self):
+        return [
+            {"symbol": "SOLUSDT", "price": "150"},
+            {"symbol": "ABCBTC", "price": "0.001"},
+            {"symbol": "BTCUSDT", "price": "60000"},
+        ]
+
+
+class StrategySignalTests(unittest.TestCase):
+    def setUp(self):
+        self.strategy = {
+            "buy_rsi_recovery": app.DEFAULT_BUY_RSI_RECOVERY,
+            "max_support_distance_pct": app.DEFAULT_MAX_SUPPORT_DISTANCE_PCT,
+            "trend_interval": app.DEFAULT_TREND_INTERVAL,
+            "trend_ema_period": app.DEFAULT_TREND_EMA_PERIOD,
+            "min_net_reward_pct": app.DEFAULT_MIN_NET_REWARD_PCT,
+            "estimated_round_trip_fee_pct": (
+                app.DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT
+            ),
+            "atr_sl_multiplier": app.DEFAULT_ATR_SL_MULTIPLIER,
+            "risk_reward_ratio": app.DEFAULT_RISK_REWARD_RATIO,
+            "sell_rsi_threshold": app.DEFAULT_SELL_RSI_THRESHOLD,
+        }
+
+    @patch("app.calculate_atr")
+    @patch("app.calculate_rsi")
+    def test_buy_requires_all_confirmations(self, calculate_rsi, calculate_atr):
+        calculate_rsi.side_effect = lambda data: pd.Series(
+            [40.0] * (len(data) - 2) + [34.0, 36.0]
+        )
+        calculate_atr.side_effect = lambda data: pd.Series([0.5] * len(data))
+
+        analysis = app.analyze_market(
+            FakeClient(), "TESTUSDT", "15m", self.strategy
+        )
+
+        self.assertTrue(analysis["rsi_recovered"])
+        self.assertTrue(analysis["near_support"])
+        self.assertTrue(analysis["trend_ok"])
+        self.assertTrue(analysis["reward_ok"])
+        self.assertTrue(analysis["buy_signal"])
+        for name in (
+            "rsi_recovered", "near_support", "trend_ok", "reward_ok",
+            "buy_signal", "sell_signal",
+        ):
+            self.assertIs(type(analysis[name]), bool)
+        json.dumps(analysis)
+
+    @patch("app.calculate_atr")
+    @patch("app.calculate_rsi")
+    def test_one_failed_confirmation_blocks_buy(self, calculate_rsi, calculate_atr):
+        calculate_rsi.side_effect = lambda data: pd.Series(
+            [40.0] * (len(data) - 2) + [34.0, 36.0]
+        )
+        calculate_atr.side_effect = lambda data: pd.Series([0.5] * len(data))
+
+        analysis = app.analyze_market(
+            FakeClient(support_low=95), "TESTUSDT", "15m", self.strategy
+        )
+
+        self.assertFalse(analysis["near_support"])
+        self.assertFalse(analysis["buy_signal"])
+
+    def test_watchlist_excludes_stablecoins_and_low_range_pairs(self):
+        suggestions = app.get_market_suggestions(FakeTickerClient(), 0.20)
+
+        self.assertEqual([item["symbol"] for item in suggestions], ["ACTIVEUSDT"])
+        self.assertIn("after estimated costs", suggestions[0]["analysis"])
+
+    def test_spot_portfolio_includes_free_locked_and_bridged_assets(self):
+        available, total, unpriced = app.get_spot_portfolio_value(
+            FakePortfolioClient()
+        )
+
+        self.assertEqual(available, Decimal("100"))
+        self.assertEqual(total, Decimal("1005.000"))
+        self.assertEqual(unpriced, ["UNKNOWN"])
+
+
+if __name__ == "__main__":
+    unittest.main()

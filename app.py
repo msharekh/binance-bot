@@ -16,8 +16,20 @@ SUPPORTED_INTERVALS = {
     "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h",
     "12h", "1d", "3d", "1w", "1M",
 }
-RISK_REWARD_RATIO = Decimal("2")
-ATR_SL_MULTIPLIER = Decimal("1.5")
+INTERVAL_MINUTES = {
+    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
+    "12h": 720, "1d": 1440, "3d": 4320, "1w": 10080, "1M": 43200,
+}
+DEFAULT_RISK_REWARD_RATIO = Decimal("2")
+DEFAULT_ATR_SL_MULTIPLIER = Decimal("1.5")
+DEFAULT_BUY_RSI_RECOVERY = Decimal("35")
+DEFAULT_MAX_SUPPORT_DISTANCE_PCT = Decimal("0.30")
+DEFAULT_TREND_INTERVAL = Client.KLINE_INTERVAL_1HOUR
+DEFAULT_TREND_EMA_PERIOD = 50
+DEFAULT_MIN_NET_REWARD_PCT = Decimal("0.50")
+DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT = Decimal("0.20")
+DEFAULT_SELL_RSI_THRESHOLD = Decimal("65")
 TRADE_AMOUNT_USDT = Decimal(os.getenv("TRADE_AMOUNT_USDT", "25"))
 DEFAULT_MAX_TOTAL_EXPOSURE_USDT = Decimal(
     os.getenv("MAX_TOTAL_EXPOSURE_USDT", "75")
@@ -26,6 +38,13 @@ MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
 POLL_SECONDS = 60
 LIVE_PRICE_REFRESH_SECONDS = 10
 SUGGESTION_REFRESH_SECONDS = 15 * 60
+WATCHLIST_MIN_QUOTE_VOLUME = 30_000_000
+WATCHLIST_MIN_CHANGE_PCT = 0.5
+WATCHLIST_MIN_RANGE_PCT = 1.5
+STABLE_BASE_ASSETS = {
+    "AEUR", "BFUSD", "DAI", "EUR", "FDUSD", "PYUSD", "RLUSD", "TUSD",
+    "TRY", "USDC", "USDE", "USDP", "USDS", "USD1",
+}
 
 # Comma-separated USDT markets, for example: BTCUSDT,ETHUSDT,TRXUSDT
 DEFAULT_SYMBOLS = tuple(
@@ -87,6 +106,15 @@ def load_runtime_config():
         "max_open_positions": MAX_OPEN_POSITIONS,
         "trading_on_hold": False,
         "interval": INTERVAL,
+        "buy_rsi_recovery": DEFAULT_BUY_RSI_RECOVERY,
+        "max_support_distance_pct": DEFAULT_MAX_SUPPORT_DISTANCE_PCT,
+        "trend_interval": DEFAULT_TREND_INTERVAL,
+        "trend_ema_period": DEFAULT_TREND_EMA_PERIOD,
+        "min_net_reward_pct": DEFAULT_MIN_NET_REWARD_PCT,
+        "estimated_round_trip_fee_pct": DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT,
+        "atr_sl_multiplier": DEFAULT_ATR_SL_MULTIPLIER,
+        "risk_reward_ratio": DEFAULT_RISK_REWARD_RATIO,
+        "sell_rsi_threshold": DEFAULT_SELL_RSI_THRESHOLD,
     }
     if not CONFIG_FILE.exists():
         return config
@@ -109,6 +137,40 @@ def load_runtime_config():
         )
         trading_on_hold = bool(saved.get("trading_on_hold", False))
         interval = str(saved.get("interval", INTERVAL))
+        buy_rsi_recovery = Decimal(
+            str(saved.get("buy_rsi_recovery", DEFAULT_BUY_RSI_RECOVERY))
+        )
+        max_support_distance_pct = Decimal(
+            str(
+                saved.get(
+                    "max_support_distance_pct", DEFAULT_MAX_SUPPORT_DISTANCE_PCT
+                )
+            )
+        )
+        trend_interval = str(saved.get("trend_interval", DEFAULT_TREND_INTERVAL))
+        trend_ema_period = int(
+            saved.get("trend_ema_period", DEFAULT_TREND_EMA_PERIOD)
+        )
+        min_net_reward_pct = Decimal(
+            str(saved.get("min_net_reward_pct", DEFAULT_MIN_NET_REWARD_PCT))
+        )
+        estimated_round_trip_fee_pct = Decimal(
+            str(
+                saved.get(
+                    "estimated_round_trip_fee_pct",
+                    DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT,
+                )
+            )
+        )
+        atr_sl_multiplier = Decimal(
+            str(saved.get("atr_sl_multiplier", DEFAULT_ATR_SL_MULTIPLIER))
+        )
+        risk_reward_ratio = Decimal(
+            str(saved.get("risk_reward_ratio", DEFAULT_RISK_REWARD_RATIO))
+        )
+        sell_rsi_threshold = Decimal(
+            str(saved.get("sell_rsi_threshold", DEFAULT_SELL_RSI_THRESHOLD))
+        )
         if not symbols:
             raise ValueError("At least one target symbol is required.")
         if maximum_exposure <= 0:
@@ -121,12 +183,41 @@ def load_runtime_config():
             raise ValueError("Maximum open positions must be greater than zero.")
         if interval not in SUPPORTED_INTERVALS:
             raise ValueError(f"Unsupported candle interval: {interval}.")
+        if not 1 <= buy_rsi_recovery <= 50:
+            raise ValueError("Buy RSI recovery must be between 1 and 50.")
+        if not 0 <= max_support_distance_pct <= 5:
+            raise ValueError("Support distance must be between 0% and 5%.")
+        if trend_interval not in SUPPORTED_INTERVALS:
+            raise ValueError(f"Unsupported trend interval: {trend_interval}.")
+        if INTERVAL_MINUTES[trend_interval] < INTERVAL_MINUTES[interval]:
+            raise ValueError("Trend interval cannot be shorter than candle interval.")
+        if not 10 <= trend_ema_period <= 500:
+            raise ValueError("Trend EMA period must be between 10 and 500.")
+        if not 0 <= min_net_reward_pct <= 20:
+            raise ValueError("Minimum net reward must be between 0% and 20%.")
+        if not 0 <= estimated_round_trip_fee_pct <= 5:
+            raise ValueError("Estimated round-trip fee must be between 0% and 5%.")
+        if not 0.1 <= atr_sl_multiplier <= 10:
+            raise ValueError("ATR stop multiplier must be between 0.1 and 10.")
+        if not 0.1 <= risk_reward_ratio <= 10:
+            raise ValueError("Reward/risk ratio must be between 0.1 and 10.")
+        if not 50 <= sell_rsi_threshold <= 99:
+            raise ValueError("Sell RSI threshold must be between 50 and 99.")
         config["target_symbols"] = list(symbols)
         config["max_total_exposure_usdt"] = maximum_exposure
         config["trade_amount_usdt"] = trade_amount
         config["max_open_positions"] = max_open_positions
         config["trading_on_hold"] = trading_on_hold
         config["interval"] = interval
+        config["buy_rsi_recovery"] = buy_rsi_recovery
+        config["max_support_distance_pct"] = max_support_distance_pct
+        config["trend_interval"] = trend_interval
+        config["trend_ema_period"] = trend_ema_period
+        config["min_net_reward_pct"] = min_net_reward_pct
+        config["estimated_round_trip_fee_pct"] = estimated_round_trip_fee_pct
+        config["atr_sl_multiplier"] = atr_sl_multiplier
+        config["risk_reward_ratio"] = risk_reward_ratio
+        config["sell_rsi_threshold"] = sell_rsi_threshold
         return config
     except (OSError, KeyError, ValueError, TypeError, json.JSONDecodeError) as error:
         print(f"Ignoring invalid bot_config.json: {error}")
@@ -149,7 +240,7 @@ def calculate_atr(data, window=14):
     return true_range.rolling(window=window).mean()
 
 
-def analyze_market(client, symbol, interval):
+def analyze_market(client, symbol, interval, strategy):
     klines = client.get_klines(symbol=symbol, interval=interval, limit=100)
     columns = [
         "time", "open", "high", "low", "close", "volume", "close_time",
@@ -161,27 +252,79 @@ def analyze_market(client, symbol, interval):
 
     completed = data.iloc[:-1]
     entry_price = completed["close"].iloc[-1]
-    rsi = calculate_rsi(completed).iloc[-1]
+    rsi_series = calculate_rsi(completed)
+    previous_rsi = rsi_series.iloc[-2]
+    rsi = rsi_series.iloc[-1]
     atr = calculate_atr(completed).iloc[-1]
     support = completed["low"].tail(20).min()
     resistance = completed["high"].tail(20).max()
-    stop_distance = atr * float(ATR_SL_MULTIPLIER)
+    stop_distance = atr * float(strategy["atr_sl_multiplier"])
+    reward_distance = stop_distance * float(strategy["risk_reward_ratio"])
+    gross_reward_pct = reward_distance / entry_price * 100
+    expected_net_reward_pct = gross_reward_pct - float(
+        strategy["estimated_round_trip_fee_pct"]
+    )
+
+    trend_klines = client.get_klines(
+        symbol=symbol,
+        interval=strategy["trend_interval"],
+        limit=strategy["trend_ema_period"] + 2,
+    )
+    trend_closes = pd.Series(
+        [float(kline[4]) for kline in trend_klines[:-1]], dtype="float64"
+    )
+    if len(trend_closes) < strategy["trend_ema_period"]:
+        raise ValueError(
+            f"Not enough {strategy['trend_interval']} candles for "
+            f"EMA {strategy['trend_ema_period']}."
+        )
+    trend_price = trend_closes.iloc[-1]
+    trend_ema = trend_closes.ewm(
+        span=strategy["trend_ema_period"], adjust=False
+    ).mean().iloc[-1]
+    distance_to_support_pct = ((entry_price - support) / entry_price) * 100
+    rsi_recovered = bool(
+        previous_rsi <= float(strategy["buy_rsi_recovery"])
+        and rsi > float(strategy["buy_rsi_recovery"])
+    )
+    near_support = bool(
+        distance_to_support_pct <= float(strategy["max_support_distance_pct"])
+    )
+    trend_ok = bool(trend_price > trend_ema)
+    reward_ok = bool(
+        expected_net_reward_pct >= float(strategy["min_net_reward_pct"])
+    )
+    buy_signal = bool(rsi_recovered and near_support and trend_ok and reward_ok)
     return {
         "entry": entry_price,
         "sl": entry_price - stop_distance,
-        "tp": entry_price + stop_distance * float(RISK_REWARD_RATIO),
+        "tp": entry_price + reward_distance,
         "rsi": rsi,
+        "previous_rsi": previous_rsi,
         "atr": atr,
         "support": support,
         "resistance": resistance,
-        "distance_to_support_pct": ((entry_price - support) / entry_price) * 100,
+        "distance_to_support_pct": distance_to_support_pct,
+        "trend_interval": strategy["trend_interval"],
+        "trend_ema_period": strategy["trend_ema_period"],
+        "trend_price": trend_price,
+        "trend_ema": trend_ema,
+        "gross_reward_pct": gross_reward_pct,
+        "expected_net_reward_pct": expected_net_reward_pct,
+        "rsi_recovered": rsi_recovered,
+        "near_support": near_support,
+        "trend_ok": trend_ok,
+        "reward_ok": reward_ok,
+        "buy_signal": buy_signal,
+        "sell_signal": bool(rsi >= float(strategy["sell_rsi_threshold"])),
+        "stop_distance": stop_distance,
     }
 
 
 def market_signal(analysis):
-    if analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2:
+    if analysis["buy_signal"]:
         return "BUY SIGNAL"
-    if analysis["rsi"] >= 65:
+    if analysis["sell_signal"]:
         return "SELL SIGNAL"
     return "NEUTRAL"
 
@@ -214,14 +357,17 @@ def save_positions(positions):
 
 
 def save_status(
-    available_usdt, analyses, market_statuses, target_symbols, maximum_exposure,
-    trade_amount, max_open_positions, trading_on_hold, interval, suggestions,
+    available_usdt, total_portfolio_usdt, unpriced_assets, analyses,
+    market_statuses, target_symbols, maximum_exposure, trade_amount,
+    max_open_positions, trading_on_hold, interval, suggestions, strategy,
 ):
     temporary_file = STATUS_FILE.with_suffix(".tmp")
     status = {
         "environment": ENVIRONMENT,
         "updated_at": int(time.time()),
         "available_usdt": str(available_usdt),
+        "total_portfolio_usdt": str(total_portfolio_usdt),
+        "portfolio_unpriced_assets": unpriced_assets,
         "trade_amount_usdt": str(trade_amount),
         "max_open_positions": max_open_positions,
         "trading_on_hold": trading_on_hold,
@@ -231,6 +377,21 @@ def save_status(
         "market_statuses": market_statuses,
         "trading_enabled": TRADING_ENABLED,
         "suggestions": suggestions,
+        "strategy": {
+            "buy_rsi_recovery": str(strategy["buy_rsi_recovery"]),
+            "max_support_distance_pct": str(
+                strategy["max_support_distance_pct"]
+            ),
+            "trend_interval": strategy["trend_interval"],
+            "trend_ema_period": strategy["trend_ema_period"],
+            "min_net_reward_pct": str(strategy["min_net_reward_pct"]),
+            "estimated_round_trip_fee_pct": str(
+                strategy["estimated_round_trip_fee_pct"]
+            ),
+            "atr_sl_multiplier": str(strategy["atr_sl_multiplier"]),
+            "risk_reward_ratio": str(strategy["risk_reward_ratio"]),
+            "sell_rsi_threshold": str(strategy["sell_rsi_threshold"]),
+        },
         "markets": {
             symbol: {
                 "price": analysis["entry"],
@@ -240,6 +401,17 @@ def save_status(
                 "resistance": analysis["resistance"],
                 "suggested_sl": analysis["sl"],
                 "suggested_tp": analysis["tp"],
+                "previous_rsi": analysis["previous_rsi"],
+                "distance_to_support_pct": analysis["distance_to_support_pct"],
+                "trend_interval": analysis["trend_interval"],
+                "trend_ema_period": analysis["trend_ema_period"],
+                "trend_price": analysis["trend_price"],
+                "trend_ema": analysis["trend_ema"],
+                "expected_net_reward_pct": analysis["expected_net_reward_pct"],
+                "rsi_recovered": analysis["rsi_recovered"],
+                "near_support": analysis["near_support"],
+                "trend_ok": analysis["trend_ok"],
+                "reward_ok": analysis["reward_ok"],
                 "signal": market_signal(analysis),
                 "status": market_statuses.get(symbol, "UNKNOWN"),
             }
@@ -343,6 +515,57 @@ def get_free_balance(client, asset):
     return Decimal(balance["free"]) if balance else Decimal("0")
 
 
+def get_spot_portfolio_value(client):
+    account = client.get_account()
+    prices = {
+        ticker["symbol"]: Decimal(str(ticker["price"]))
+        for ticker in client.get_all_tickers()
+        if Decimal(str(ticker["price"])) > 0
+    }
+
+    def usdt_rate(asset):
+        if asset == "USDT":
+            return Decimal("1")
+        direct = prices.get(f"{asset}USDT")
+        if direct is not None:
+            return direct
+        inverse = prices.get(f"USDT{asset}")
+        if inverse is not None:
+            return Decimal("1") / inverse
+        for bridge in ("BTC", "ETH", "BNB"):
+            bridge_usdt = prices.get(f"{bridge}USDT")
+            if bridge_usdt is None:
+                continue
+            if asset == bridge:
+                return bridge_usdt
+            asset_bridge = prices.get(f"{asset}{bridge}")
+            if asset_bridge is not None:
+                return asset_bridge * bridge_usdt
+            bridge_asset = prices.get(f"{bridge}{asset}")
+            if bridge_asset is not None:
+                return bridge_usdt / bridge_asset
+        return None
+
+    available_usdt = Decimal("0")
+    total_usdt = Decimal("0")
+    unpriced_assets = []
+    for balance in account.get("balances", []):
+        asset = str(balance["asset"])
+        free = Decimal(str(balance["free"]))
+        locked = Decimal(str(balance["locked"]))
+        quantity = free + locked
+        if asset == "USDT":
+            available_usdt = free
+        if quantity <= 0:
+            continue
+        rate = usdt_rate(asset)
+        if rate is None:
+            unpriced_assets.append(asset)
+            continue
+        total_usdt += quantity * rate
+    return available_usdt, total_usdt, sorted(unpriced_assets)
+
+
 def get_market_rules(client, symbol):
     symbol_info = client.get_symbol_info(symbol)
     if not symbol_info:
@@ -369,17 +592,14 @@ def get_market_rules(client, symbol):
     }
 
 
-def get_market_suggestions(client):
-    excluded_symbols = {
-        "USDCUSDT", "FDUSDUSDT", "TUSDUSDT", "USDPUSDT", "DAIUSDT",
-        "EURUSDT", "TRYUSDT", "AEURUSDT", "BFUSDUSDT", "USDEUSDT",
-    }
+def get_market_suggestions(client, estimated_round_trip_fee_pct):
     candidates = []
     for ticker in client.get_ticker():
         symbol = ticker["symbol"]
+        base_asset = symbol[:-4] if symbol.endswith("USDT") else ""
         if (
             not symbol.endswith("USDT")
-            or symbol in excluded_symbols
+            or base_asset in STABLE_BASE_ASSETS
             or any(symbol.endswith(suffix) for suffix in (
                 "UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT"
             ))
@@ -388,12 +608,21 @@ def get_market_suggestions(client):
         quote_volume = float(ticker["quoteVolume"])
         change_pct = float(ticker["priceChangePercent"])
         weighted_average = float(ticker["weightedAvgPrice"])
-        if quote_volume < 30_000_000 or change_pct <= 0 or weighted_average <= 0:
+        if (
+            quote_volume < WATCHLIST_MIN_QUOTE_VOLUME
+            or change_pct < WATCHLIST_MIN_CHANGE_PCT
+            or weighted_average <= 0
+        ):
             continue
         range_pct = (
             (float(ticker["highPrice"]) - float(ticker["lowPrice"]))
             / weighted_average
             * 100
+        )
+        if range_pct < WATCHLIST_MIN_RANGE_PCT:
+            continue
+        estimated_net_range = max(
+            0, range_pct - float(estimated_round_trip_fee_pct)
         )
         risk_note = (
             "Strong momentum; pullback risk is elevated."
@@ -410,6 +639,7 @@ def get_market_suggestions(client):
                 "analysis": (
                     f"Positive {change_pct:.1f}% momentum, {range_pct:.1f}% "
                     f"24h range, and {quote_volume / 1_000_000:.1f}M USDT volume. "
+                    f"Range after estimated costs: {estimated_net_range:.1f}%. "
                     f"{risk_note}"
                 ),
             }
@@ -458,7 +688,7 @@ def buy(
     executed_quantity = Decimal(order["executedQty"])
     quote_spent = Decimal(order["cummulativeQuoteQty"])
     average_price = quote_spent / executed_quantity
-    stop_distance = Decimal(str(analysis["atr"])) * ATR_SL_MULTIPLIER
+    stop_distance = Decimal(str(analysis["stop_distance"]))
     position = {
         "symbol": symbol,
         "base_asset": rules["base_asset"],
@@ -467,7 +697,10 @@ def buy(
         "quantity": str(executed_quantity),
         "entry": str(average_price),
         "stop_loss": str(average_price - stop_distance),
-        "take_profit": str(average_price + stop_distance * RISK_REWARD_RATIO),
+        "take_profit": str(
+            average_price
+            + Decimal(str(analysis["tp"] - analysis["entry"]))
+        ),
         "opened_at": int(time.time()),
     }
     positions[symbol] = position
@@ -620,7 +853,7 @@ def decide_and_trade(
         elif price >= Decimal(position["take_profit"]):
             order = sell(client, symbol, rules, position, analysis, positions, "take profit")
             return "SELL FILLED" if order else "SELL SKIPPED"
-        elif analysis["rsi"] >= 65:
+        elif analysis["sell_signal"]:
             order = sell(
                 client, symbol, rules, position, analysis, positions, "RSI sell signal"
             )
@@ -633,8 +866,7 @@ def decide_and_trade(
         print(f"{symbol} ON HOLD: new buys are paused.")
         return "ON HOLD"
 
-    buy_signal = analysis["rsi"] <= 35 or analysis["distance_to_support_pct"] <= 0.2
-    if buy_signal:
+    if analysis["buy_signal"]:
         position = buy(
             client, symbol, rules, analysis, positions, maximum_exposure,
             trade_amount, max_open_positions,
@@ -652,6 +884,18 @@ def print_report(symbol, analysis):
     print(f"ATR: {analysis['atr']:.8f} | Support: {analysis['support']:.8f}")
     print(f"Resistance: {analysis['resistance']:.8f} | Signal: {verdict}")
     print(f"Suggested SL: {analysis['sl']:.8f} | Suggested TP: {analysis['tp']:.8f}")
+    print(
+        "Buy checks | "
+        f"RSI recovery: {'YES' if analysis['rsi_recovered'] else 'NO'} | "
+        f"Near support: {'YES' if analysis['near_support'] else 'NO'} | "
+        f"Trend: {'YES' if analysis['trend_ok'] else 'NO'} | "
+        f"Net reward: {'YES' if analysis['reward_ok'] else 'NO'}"
+    )
+    print(
+        f"Trend: {analysis['trend_interval']} EMA {analysis['trend_ema_period']} "
+        f"= {analysis['trend_ema']:.8f} | "
+        f"Expected net reward: {analysis['expected_net_reward_pct']:.3f}%"
+    )
     print("=" * 72)
 
 
@@ -682,7 +926,10 @@ def main():
             refresh_live_prices(client, active_symbols)
             if time.time() - suggestions_updated_at >= SUGGESTION_REFRESH_SECONDS:
                 try:
-                    suggestions = get_market_suggestions(client)
+                    suggestions = get_market_suggestions(
+                        client,
+                        runtime_config["estimated_round_trip_fee_pct"],
+                    )
                     suggestions_updated_at = time.time()
                 except BinanceAPIException as error:
                     print(f"Could not refresh market suggestions: {error}")
@@ -701,7 +948,9 @@ def main():
                 try:
                     if symbol not in rules_by_symbol:
                         rules_by_symbol[symbol] = get_market_rules(client, symbol)
-                    analysis = analyze_market(client, symbol, interval)
+                    analysis = analyze_market(
+                        client, symbol, interval, runtime_config
+                    )
                     analyses[symbol] = analysis
                     print_report(symbol, analysis)
                     if TRADING_ENABLED:
@@ -720,10 +969,15 @@ def main():
                     print(f"{symbol} error: {error}")
                     market_statuses[symbol] = "ERROR"
             try:
+                available_usdt, total_portfolio_usdt, unpriced_assets = (
+                    get_spot_portfolio_value(client)
+                )
                 save_status(
-                    get_free_balance(client, "USDT"), analyses, market_statuses,
-                    target_symbols, maximum_exposure, trade_amount,
+                    available_usdt, total_portfolio_usdt, unpriced_assets,
+                    analyses, market_statuses, target_symbols,
+                    maximum_exposure, trade_amount,
                     max_open_positions, trading_on_hold, interval, suggestions,
+                    runtime_config,
                 )
             except (BinanceAPIException, BinanceOrderException) as error:
                 print(f"Could not update account status: {error}")
