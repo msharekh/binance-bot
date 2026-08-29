@@ -211,8 +211,9 @@ http://localhost:8501
 
 The browser dashboard refreshes every five seconds and displays:
 
-- A sticky top summary bar with available USDT, open-position count, maximum
-  per-trade amount, maximum total exposure, today's realized P&L, current
+- A sticky top summary bar with available USDT, current USDT market value across
+  open trades, their combined total portfolio value, open-position count,
+  maximum per-trade amount, maximum total exposure, today's realized P&L, current
   unrealized P&L for open positions, total realized P&L, and the active interval
 - Color-coded market-check cards that flash after each new bot cycle and show
   price, RSI, ATR, support, resistance, signal, suggested SL/TP, and bot status
@@ -238,6 +239,8 @@ The browser dashboard refreshes every five seconds and displays:
 - Collapsible color-coded result cards per symbol, with green/red total P&L,
   completed trades, wins, win rate, and average P&L
 - Transaction filters for symbol, side, reason, environment, and date range
+- Color-coded transaction rows and a clear `PROFIT`, `LOSS`, `BREAK EVEN`, or
+  `ENTRY` result label
 - Estimated realized profit or loss before commissions
 - A CSV download of the filtered transaction history
 

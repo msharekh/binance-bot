@@ -72,7 +72,7 @@ st.markdown(
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
       margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
-    .summary-grid {display:grid;grid-template-columns:repeat(7,minmax(105px,1fr));gap:.45rem}
+    .summary-grid {display:grid;grid-template-columns:repeat(9,minmax(100px,1fr));gap:.45rem}
     .summary-item {padding:.42rem .55rem;border-radius:.5rem;background:#0f172a}
     .summary-label {color:#cbd5e1;font-size:.9rem;text-transform:uppercase;font-weight:800}
     .summary-value {color:#f8fafc;font-size:1.5rem;font-weight:900;line-height:1.2}
@@ -518,6 +518,28 @@ def filter_history(history):
     return filtered
 
 
+def transaction_result(row):
+    if str(row.get("Side", "")).upper() != "SELL":
+        return "ENTRY"
+    pnl = row.get("Est. P&L (USDT)")
+    if pd.isna(pnl) or float(pnl) == 0:
+        return "BREAK EVEN"
+    return "PROFIT" if float(pnl) > 0 else "LOSS"
+
+
+def style_transaction_row(row):
+    result = row.get("Result")
+    if result == "PROFIT":
+        style = "background-color:rgba(34,197,94,.16);color:#bbf7d0;font-weight:650"
+    elif result == "LOSS":
+        style = "background-color:rgba(239,68,68,.16);color:#fecaca;font-weight:650"
+    elif result == "BREAK EVEN":
+        style = "background-color:rgba(148,163,184,.10);color:#e2e8f0"
+    else:
+        style = ""
+    return [style] * len(row)
+
+
 def format_market_number(value, decimals=8):
     if value is None:
         return "N/A"
@@ -745,6 +767,7 @@ def render_top_bar():
     total_pnl = 0.0
     today_pnl = 0.0
     today_unrealized_pnl = 0.0
+    usdt_in_trades = 0.0
     if not history.empty:
         sells = history[history["Side"] == "SELL"]
         total_pnl = float(sells["Est. P&L (USDT)"].sum())
@@ -764,6 +787,7 @@ def render_top_bar():
                     "price", status_markets.get(symbol, {}).get("price", entry)
                 )
             )
+            usdt_in_trades += current * quantity
             today_unrealized_pnl += (current - entry) * quantity
         except (KeyError, TypeError, ValueError):
             continue
@@ -792,6 +816,11 @@ def render_top_bar():
     )
     total_class = "pnl-positive" if total_pnl >= 0 else "pnl-negative"
     available_text = f"{float(available):,.2f}" if available is not None else "N/A"
+    total_portfolio_text = (
+        f"{float(available) + usdt_in_trades:,.2f}"
+        if available is not None
+        else "N/A"
+    )
     trade_amount_text = (
         f"{float(trade_amount):,.2f}" if trade_amount is not None else "N/A"
     )
@@ -807,6 +836,8 @@ def render_top_bar():
           {hold_banner}
           <div class="summary-grid">
             <div class="summary-item"><div class="summary-label">Available USDT</div><div class="summary-value">{available_text}</div></div>
+            <div class="summary-item" title="Current market price multiplied by tracked quantity for all open positions"><div class="summary-label">USDT in trades</div><div class="summary-value">{usdt_in_trades:,.2f}</div></div>
+            <div class="summary-item" title="Available USDT plus the current market value of all tracked open positions"><div class="summary-label">Total portfolio USDT</div><div class="summary-value">{total_portfolio_text}</div></div>
             <div class="summary-item"><div class="summary-label">Open / max positions</div><div class="summary-value">{len(positions)} / {max_open_positions}</div></div>
             <div class="summary-item"><div class="summary-label">Per-trade max</div><div class="summary-value">{trade_amount_text}</div></div>
             <div class="summary-item"><div class="summary-label">Max total exposure</div><div class="summary-value">{float(maximum):,.2f}</div></div>
@@ -869,16 +900,23 @@ def render_dashboard():
         return
     filtered = filter_history(history).sort_values("Time", ascending=False)
     display_columns = [
-        "Time", "Environment", "Side", "Symbol", "Quantity", "Price", "Value",
-        "Quote asset", "Est. P&L (USDT)", "Reason", "Order ID",
+        "Time", "Environment", "Side", "Result", "Symbol", "Quantity", "Price",
+        "Value", "Quote asset", "Est. P&L (USDT)", "Reason", "Order ID",
     ]
+    filtered = filtered.copy()
+    filtered["Result"] = filtered.apply(transaction_result, axis=1)
     for column in display_columns:
         if column not in filtered:
             filtered[column] = None
-    st.dataframe(filtered[display_columns], hide_index=True, width="stretch")
+    display_frame = filtered[display_columns]
+    styled_frame = display_frame.style.apply(style_transaction_row, axis=1).format(
+        {"Est. P&L (USDT)": lambda value: f"{value:+,.4f}"},
+        na_rep="—",
+    )
+    st.dataframe(styled_frame, hide_index=True, width="stretch")
     st.download_button(
         "Download filtered transaction CSV",
-        filtered[display_columns].to_csv(index=False),
+        display_frame.to_csv(index=False),
         file_name="binance_filtered_transactions.csv",
         mime="text/csv",
     )

@@ -1,78 +1,78 @@
 {
   "environment": "production",
-  "updated_at": 1787970130,
+  "updated_at": 1787971144,
   "prices": {
     "PUMPUSDT": {
-      "price": "0.00461300",
-      "previous_price": "0.00461900",
-      "direction": "DOWN",
-      "change_pct": "-0.1298982463736739554016020784"
+      "price": "0.00457600",
+      "previous_price": "0.00457500",
+      "direction": "UP",
+      "change_pct": "0.02185792349726775956284153005"
     },
     "SOLUSDT": {
-      "price": "103.90000000",
-      "previous_price": "103.94000000",
-      "direction": "DOWN",
-      "change_pct": "-0.03848374061958822397537040600"
+      "price": "103.96000000",
+      "previous_price": "103.95000000",
+      "direction": "UP",
+      "change_pct": "0.009620009620009620009620009620"
     },
     "XRPUSDT": {
-      "price": "1.38160000",
-      "previous_price": "1.38190000",
-      "direction": "DOWN",
-      "change_pct": "-0.02170924090020985599536869527"
-    },
-    "ENAUSDT": {
-      "price": "0.15850000",
-      "previous_price": "0.15860000",
-      "direction": "DOWN",
-      "change_pct": "-0.06305170239596469104665825977"
-    },
-    "USD1USDT": {
-      "price": "0.99973000",
-      "previous_price": "0.99973000",
+      "price": "1.38220000",
+      "previous_price": "1.38220000",
       "direction": "FLAT",
       "change_pct": "0"
     },
+    "ENAUSDT": {
+      "price": "0.15930000",
+      "previous_price": "0.15930000",
+      "direction": "FLAT",
+      "change_pct": "0"
+    },
+    "USD1USDT": {
+      "price": "0.99972000",
+      "previous_price": "0.99973000",
+      "direction": "DOWN",
+      "change_pct": "-0.001000270072919688315845278225"
+    },
     "TRXUSDT": {
       "price": "0.34100000",
-      "previous_price": "0.34110000",
-      "direction": "DOWN",
-      "change_pct": "-0.02931691586045148050425095280"
+      "previous_price": "0.34100000",
+      "direction": "FLAT",
+      "change_pct": "0"
     },
     "HEMIUSDT": {
-      "price": "0.01182000",
-      "previous_price": "0.01185000",
-      "direction": "DOWN",
-      "change_pct": "-0.2531645569620253164556962025"
+      "price": "0.01190000",
+      "previous_price": "0.01190000",
+      "direction": "FLAT",
+      "change_pct": "0"
     },
     "SNDKBUSDT": {
-      "price": "1483.02000000",
-      "previous_price": "1483.27000000",
-      "direction": "DOWN",
-      "change_pct": "-0.01685465222110606969735786472"
+      "price": "1484.69000000",
+      "previous_price": "1484.63000000",
+      "direction": "UP",
+      "change_pct": "0.004041410991290759313768413679"
     },
     "TRUMPUSDT": {
-      "price": "2.74600000",
-      "previous_price": "2.74400000",
+      "price": "2.79800000",
+      "previous_price": "2.79400000",
       "direction": "UP",
-      "change_pct": "0.07288629737609329446064139942"
+      "change_pct": "0.1431639226914817465998568361"
     },
     "VIRTUALUSDT": {
-      "price": "0.68740000",
-      "previous_price": "0.68750000",
-      "direction": "DOWN",
-      "change_pct": "-0.01454545454545454545454545455"
+      "price": "0.68760000",
+      "previous_price": "0.68700000",
+      "direction": "UP",
+      "change_pct": "0.08733624454148471615720524017"
     },
     "ETHUSDT": {
-      "price": "2438.37000000",
-      "previous_price": "2438.72000000",
-      "direction": "DOWN",
-      "change_pct": "-0.01435179110352972050911953812"
+      "price": "2439.36000000",
+      "previous_price": "2439.35000000",
+      "direction": "UP",
+      "change_pct": "0.0004099452723061471293582306762"
     },
     "BTCUSDT": {
-      "price": "77641.23000000",
-      "previous_price": "77649.50000000",
-      "direction": "DOWN",
-      "change_pct": "-0.01065042273292165435707892517"
+      "price": "77661.32000000",
+      "previous_price": "77661.32000000",
+      "direction": "FLAT",
+      "change_pct": "0"
     }
   }
 }
