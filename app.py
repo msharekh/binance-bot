@@ -40,9 +40,9 @@ MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
 POLL_SECONDS = 60
 LIVE_PRICE_REFRESH_SECONDS = 10
 SUGGESTION_REFRESH_SECONDS = 15 * 60
-WATCHLIST_MIN_QUOTE_VOLUME = 30_000_000
+WATCHLIST_MIN_QUOTE_VOLUME = 10_000_000
+WATCHLIST_LIMIT = 30
 MARKET_OVERVIEW_MIN_QUOTE_VOLUME = 10_000_000
-WATCHLIST_MIN_CHANGE_PCT = 0.5
 WATCHLIST_MIN_RANGE_PCT = 1.5
 MARKET_DIRECTION_THRESHOLD_PCT = 1.5
 MARKET_MEDIAN_DIRECTION_THRESHOLD_PCT = 1.0
@@ -716,21 +716,21 @@ def get_market_suggestions(client, estimated_round_trip_fee_pct):
                     "range_pct": range_pct,
                 }
             )
-        if (
-            quote_volume < WATCHLIST_MIN_QUOTE_VOLUME
-            or change_pct < WATCHLIST_MIN_CHANGE_PCT
-        ):
+        if quote_volume < WATCHLIST_MIN_QUOTE_VOLUME:
             continue
         if range_pct < WATCHLIST_MIN_RANGE_PCT:
             continue
         estimated_net_range = max(
             0, range_pct - float(estimated_round_trip_fee_pct)
         )
-        risk_note = (
-            "Strong momentum; pullback risk is elevated."
-            if change_pct >= 10
-            else "Positive momentum with comparatively lower extension."
-        )
+        if change_pct >= 10:
+            momentum_note = "Strong positive momentum; pullback risk is elevated."
+        elif change_pct > 0:
+            momentum_note = "Positive momentum with comparatively lower extension."
+        elif change_pct <= -10:
+            momentum_note = "Strong negative momentum; downside risk is elevated."
+        else:
+            momentum_note = "Negative momentum; wait for recovery confirmation."
         candidates.append(
             {
                 "symbol": symbol,
@@ -739,15 +739,15 @@ def get_market_suggestions(client, estimated_round_trip_fee_pct):
                 "range_pct": range_pct,
                 "quote_volume_usdt": quote_volume,
                 "analysis": (
-                    f"Positive {change_pct:.1f}% momentum, {range_pct:.1f}% "
+                    f"{change_pct:+.1f}% 24h change, {range_pct:.1f}% "
                     f"24h range, and {quote_volume / 1_000_000:.1f}M USDT volume. "
                     f"Range after estimated costs: {estimated_net_range:.1f}%. "
-                    f"{risk_note}"
+                    f"{momentum_note}"
                 ),
             }
         )
     candidates.sort(key=lambda item: item["range_pct"], reverse=True)
-    return candidates[:6], classify_market_overview(overview_markets)
+    return candidates[:WATCHLIST_LIMIT], classify_market_overview(overview_markets)
 
 
 def round_to_step(quantity, step_size):

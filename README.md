@@ -236,7 +236,7 @@ The browser dashboard refreshes every five seconds and displays:
   remain easy to scan
 - Every open-position card shows unit price and corresponding gross USDT position
   value at entry, current price, take profit, and stop loss
-- Six read-only Binance Spot watchlist candidates with current price, 24-hour
+- Up to 30 read-only Binance Spot watchlist candidates with current price, 24-hour
   change, trading range, USDT volume, and a short justification
 - Filled production buy and sell orders across all configured symbols
 - Completed-trade results grouped by symbol, including win rate and estimated P&L
@@ -299,7 +299,7 @@ The bot validates new symbols against Binance before analyzing or trading them.
 An invalid or unavailable pair is reported as an error and does not prevent
 other configured markets from being processed.
 
-The six-currency Spot watchlist is collapsed by default. Expand it only when
+The 30-currency Spot watchlist is collapsed by default. Expand it only when
 you want to review the current candidates and analysis.
 
 ### Overall market status
@@ -353,7 +353,7 @@ The bot and dashboard have separate roles:
   any nonzero assets that could not be converted to USDT, plus the latest market
   watchlist and overall market-breadth classification. The watchlist is
   refreshed from Binance every 15 minutes, excludes stablecoin and leveraged
-  pairs, and requires at least +0.5% change, a 1.5% range, and 30 million USDT
+  pairs, and requires at least a 1.5% range and 10 million USDT
   in rolling 24-hour volume. Qualifying pairs are ranked by 24-hour range.
 - `bot_config.json` contains dashboard-confirmed target symbols and maximum total
   USDT exposure. It contains no API credentials.

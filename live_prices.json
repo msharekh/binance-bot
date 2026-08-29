@@ -1,60 +1,108 @@
 {
   "environment": "production",
-  "updated_at": 1787998042,
+  "updated_at": 1788043810,
   "prices": {
     "PUMPUSDT": {
-      "price": "0.00467900",
-      "previous_price": "0.00467900",
-      "direction": "FLAT",
-      "change_pct": "0"
+      "price": "0.00500000",
+      "previous_price": "0.00499700",
+      "direction": "UP",
+      "change_pct": "0.06003602161296778066840104062"
     },
     "SOLUSDT": {
-      "price": "103.14000000",
-      "previous_price": "103.16000000",
-      "direction": "DOWN",
-      "change_pct": "-0.01938735944164404808065141528"
+      "price": "105.34000000",
+      "previous_price": "105.33000000",
+      "direction": "UP",
+      "change_pct": "0.009493971328206588816101775373"
     },
     "XRPUSDT": {
-      "price": "1.38160000",
-      "previous_price": "1.38160000",
+      "price": "1.39530000",
+      "previous_price": "1.39530000",
       "direction": "FLAT",
       "change_pct": "0"
     },
     "ENAUSDT": {
-      "price": "0.15570000",
-      "previous_price": "0.15580000",
-      "direction": "DOWN",
-      "change_pct": "-0.06418485237483953786906290116"
+      "price": "0.15950000",
+      "previous_price": "0.15940000",
+      "direction": "UP",
+      "change_pct": "0.06273525721455457967377666248"
     },
     "HEMIUSDT": {
-      "price": "0.01188000",
-      "previous_price": "0.01191000",
+      "price": "0.01140000",
+      "previous_price": "0.01142000",
       "direction": "DOWN",
-      "change_pct": "-0.2518891687657430730478589421"
+      "change_pct": "-0.1751313485113835376532399299"
     },
     "SNDKBUSDT": {
-      "price": "1484.66000000",
-      "previous_price": "1484.66000000",
+      "price": "1491.89000000",
+      "previous_price": "1491.89000000",
       "direction": "FLAT",
       "change_pct": "0"
     },
     "VIRTUALUSDT": {
-      "price": "0.68150000",
-      "previous_price": "0.68130000",
-      "direction": "UP",
-      "change_pct": "0.02935564362248642301482460003"
+      "price": "0.69350000",
+      "previous_price": "0.69350000",
+      "direction": "FLAT",
+      "change_pct": "0"
     },
     "ETHUSDT": {
-      "price": "2432.36000000",
-      "previous_price": "2432.11000000",
-      "direction": "UP",
-      "change_pct": "0.01027914033493550867353861462"
+      "price": "2452.17000000",
+      "previous_price": "2452.17000000",
+      "direction": "FLAT",
+      "change_pct": "0"
     },
     "DEXEUSDT": {
-      "price": "2.32800000",
-      "previous_price": "2.33100000",
+      "price": "2.24300000",
+      "previous_price": "2.24400000",
       "direction": "DOWN",
-      "change_pct": "-0.1287001287001287001287001287"
+      "change_pct": "-0.04456327985739750445632798574"
+    },
+    "NILUSDT": {
+      "price": "0.05485000",
+      "previous_price": "0.05480000",
+      "direction": "UP",
+      "change_pct": "0.09124087591240875912408759124"
+    },
+    "GIGGLEUSDT": {
+      "price": "40.79000000",
+      "previous_price": "40.79000000",
+      "direction": "FLAT",
+      "change_pct": "0"
+    },
+    "ONGUSDT": {
+      "price": "0.12575000",
+      "previous_price": "0.12556000",
+      "direction": "UP",
+      "change_pct": "0.1513220770946161197833705002"
+    },
+    "DASHUSDT": {
+      "price": "41.37000000",
+      "previous_price": "41.36000000",
+      "direction": "UP",
+      "change_pct": "0.02417794970986460348162475822"
+    },
+    "LTCUSDT": {
+      "price": "48.95000000",
+      "previous_price": "48.94000000",
+      "direction": "UP",
+      "change_pct": "0.02043318348998774008990600736"
+    },
+    "DOGEUSDT": {
+      "price": "0.08513000",
+      "previous_price": "0.08513000",
+      "direction": "FLAT",
+      "change_pct": "0"
+    },
+    "SUIUSDT": {
+      "price": "0.74400000",
+      "previous_price": "0.74400000",
+      "direction": "FLAT",
+      "change_pct": "0"
+    },
+    "FETUSDT": {
+      "price": "0.15030000",
+      "previous_price": "0.15040000",
+      "direction": "DOWN",
+      "change_pct": "-0.06648936170212765957446808511"
     }
   }
 }

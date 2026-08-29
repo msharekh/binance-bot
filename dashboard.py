@@ -40,7 +40,7 @@ INTERVAL_MINUTES = {
 }
 
 st.set_page_config(page_title="Binance Bot Dashboard", page_icon="📈", layout="wide")
-st.title("Binance Multi-Market Bot Dashboard - Version 2")
+st.title("Binance Market Bot Dashboard")
 st.caption("Binance Spot · refreshes every 5 seconds")
 st.markdown(
     """
@@ -603,10 +603,10 @@ def render_position_progress(
 
 def render_market_suggestions(status):
     suggestions = status.get("suggestions", [])
-    with st.expander("Six Spot watchlist candidates", expanded=False):
+    with st.expander("30 Spot watchlist candidates", expanded=False):
         st.caption(
-            "Read-only screen: stablecoins excluded; requires +0.5% change, "
-            "1.5% range, and 30M USDT volume, then ranks by range. "
+            "Read-only screen: stablecoins excluded; requires a 1.5% range "
+            "and 10M USDT volume, then ranks by range. "
             "This is not a profit guarantee or a buy signal."
         )
         if not suggestions:
