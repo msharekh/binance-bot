@@ -1,6 +1,8 @@
 import json
 import html
+import os
 import re
+import time
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -8,6 +10,16 @@ from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
+
+from advisor import (
+    AdvisorError,
+    DEFAULT_MODEL,
+    DEFAULT_REFRESH_SECONDS,
+    ai_advisor_enabled,
+    ai_brief_age_seconds,
+    generate_ai_brief,
+    read_ai_brief,
+)
 
 
 PROJECT_DIR = Path(__file__).parent
@@ -23,7 +35,7 @@ INTERVAL_OPTIONS = [
 ]
 
 st.set_page_config(page_title="Binance Bot Dashboard", page_icon="📈", layout="wide")
-st.title("Binance Multi-Market Bot Dashboard")
+st.title("Binance Multi-Market Bot Dashboard - Version 2")
 st.caption("Binance Spot · refreshes every 5 seconds")
 st.markdown(
     """
@@ -31,6 +43,11 @@ st.markdown(
     .symbol-title {color:#38bdf8;font-size:1.18rem;font-weight:800;letter-spacing:.03em}
     .target-tag {display:inline-block;padding:.28rem .58rem;margin:.12rem;border-radius:999px;
       background:#172554;color:#bfdbfe;border:1px solid #2563eb;font-weight:700}
+    .ai-brief-tag {display:inline-block;max-width:min(65vw,900px);padding:.28rem .58rem;
+      margin:.12rem;border-radius:999px;background:#052e16;color:#bbf7d0;
+      border:1px solid #16a34a;font-weight:750;white-space:nowrap;overflow:hidden;
+      text-overflow:ellipsis;vertical-align:bottom}
+    .ai-brief-waiting {background:#422006;color:#fde68a;border-color:#ca8a04}
     .suggestion-card {padding:1rem;border-radius:.7rem;background:#0f172a;
       border:1px solid #334155;min-height:12rem}
     .suggestion-symbol {color:#67e8f9;font-size:1.25rem;font-weight:800}
@@ -243,7 +260,7 @@ def render_settings_panel():
                 help="Existing positions remain monitored and can still be sold.",
             )
             confirmed = st.form_submit_button(
-                "Save and confirm settings", type="primary", use_container_width=True
+                "Save and confirm settings", type="primary", width="stretch"
             )
 
         if confirmed:
@@ -361,7 +378,7 @@ def render_position_progress(
                 key=f"confirm_sell_{symbol}",
                 type="primary",
                 disabled=not trading_enabled,
-                use_container_width=True,
+                width="stretch",
             )
             if confirmed:
                 queue_sell_request(symbol, environment)
@@ -617,6 +634,89 @@ def render_market_check_cards():
     )
 
 
+@st.fragment(run_every=60)
+def render_ai_advisor():
+    if not ai_advisor_enabled():
+        st.info("AI advisor paused — no OpenAI API requests will be made.")
+        return
+
+    configured = bool(os.getenv("OPENAI_API_KEY", "").strip())
+    brief = read_ai_brief()
+    age = ai_brief_age_seconds(brief)
+    now = time.time()
+    last_attempt = st.session_state.get("ai_advisor_last_attempt", 0.0)
+    auto_due = (
+        configured
+        and (not brief or age is None or age >= DEFAULT_REFRESH_SECONDS)
+        and now - last_attempt >= 300
+    )
+    refresh_requested = st.button(
+        "Refresh AI brief",
+        type="primary",
+        width="stretch",
+        disabled=not configured,
+        key="refresh_ai_brief",
+    )
+
+    if refresh_requested or auto_due:
+        st.session_state["ai_advisor_last_attempt"] = now
+        try:
+            with st.spinner("Reviewing sanitized trading metrics..."):
+                brief = generate_ai_brief(force=refresh_requested)
+            st.session_state.pop("ai_advisor_error", None)
+            age = ai_brief_age_seconds(brief)
+        except AdvisorError as error:
+            st.session_state["ai_advisor_error"] = str(error)
+
+    if not configured:
+        st.warning("Set OPENAI_API_KEY and restart the dashboard to enable AI.")
+    if st.session_state.get("ai_advisor_error"):
+        st.error(st.session_state["ai_advisor_error"])
+
+    if not brief:
+        st.caption(
+            f"No AI brief yet. Default model: {os.getenv('OPENAI_MODEL', DEFAULT_MODEL)}"
+        )
+        return
+
+    generated_at = datetime.fromtimestamp(brief["generated_at"]).astimezone()
+    age_text = f"{age // 60} min old" if age is not None else "age unknown"
+    st.caption(
+        f"{brief.get('model', 'unknown model')} | "
+        f"{generated_at.strftime('%Y-%m-%d %H:%M:%S')} | {age_text} | read-only"
+    )
+    with st.expander("Full AI analysis", expanded=False):
+        st.markdown(f"**{brief.get('headline', 'AI performance review')}**")
+        st.markdown("**Progress**")
+        st.write(brief.get("progress", "Not available."))
+        st.markdown("**Result**")
+        st.write(brief.get("result", "Not available."))
+        st.markdown("**What is right**")
+        for item in brief.get("what_is_right", []):
+            st.write(f"- {item}")
+        st.markdown("**What is wrong**")
+        for item in brief.get("what_is_wrong", []):
+            st.write(f"- {item}")
+        st.markdown("**Recommendations**")
+        recommendations = brief.get("recommendations", [])
+        if not recommendations:
+            st.write("No setting or code change is supported by the current sample.")
+        for recommendation in recommendations:
+            st.markdown(
+                f"**{str(recommendation.get('priority', 'low')).upper()} | "
+                f"{recommendation.get('area', 'Review')}**"
+            )
+            st.write(recommendation.get("suggestion", ""))
+            st.caption(
+                f"Current: {recommendation.get('current_value', 'N/A')} | "
+                f"Proposed: {recommendation.get('proposed_value', 'N/A')} | "
+                f"Type: {recommendation.get('change_type', 'none')}"
+            )
+            st.caption(f"Why: {recommendation.get('reason', 'Not provided.')}")
+        st.markdown(f"**Confidence:** {brief.get('confidence', 'low').upper()}")
+        st.warning(brief.get("risk_note", "AI analysis is not a profit guarantee."))
+
+
 @st.fragment(run_every=5)
 def render_top_bar():
     state = read_state()
@@ -668,9 +768,23 @@ def render_top_bar():
         except (KeyError, TypeError, ValueError):
             continue
     active_interval = str(status.get("interval") or config.get("interval", "15m"))
+    advisor_enabled = ai_advisor_enabled()
+    ai_brief = read_ai_brief() if advisor_enabled else {}
+    if ai_brief.get("environment") not in (None, status.get("environment")):
+        ai_brief = {}
+    ai_headline = str(
+        ai_brief.get(
+            "headline",
+            "WAITING FOR FIRST BRIEF" if advisor_enabled else "PAUSED",
+        )
+    )
+    ai_style = "" if ai_brief else " ai-brief-waiting"
     tags = (
         f'<span class="target-tag">INTERVAL &middot; '
         f'{html.escape(active_interval)}</span>'
+        f'<span class="ai-brief-tag{ai_style}" '
+        f'title="Open AI Advisor in the sidebar">AI &middot; '
+        f'{html.escape(ai_headline)}</span>'
     )
     today_class = "pnl-positive" if today_pnl >= 0 else "pnl-negative"
     today_unrealized_class = (
@@ -761,7 +875,7 @@ def render_dashboard():
     for column in display_columns:
         if column not in filtered:
             filtered[column] = None
-    st.dataframe(filtered[display_columns], hide_index=True, use_container_width=True)
+    st.dataframe(filtered[display_columns], hide_index=True, width="stretch")
     st.download_button(
         "Download filtered transaction CSV",
         filtered[display_columns].to_csv(index=False),
@@ -774,5 +888,7 @@ render_top_bar()
 render_market_check_cards()
 render_dashboard()
 with st.sidebar:
+    st.header("Version 2 AI")
+    render_ai_advisor()
     st.header("Bot controls")
     render_settings_panel()

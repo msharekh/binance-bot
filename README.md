@@ -27,6 +27,7 @@ or validating configuration.
 - `pandas`
 - `python-binance`
 - `streamlit` for the local transaction dashboard
+- `openai` for the optional Version 2 AI advisor
 - Binance Spot production API credentials with Spot trading permission
 
 ## Create the virtual environment
@@ -61,13 +62,13 @@ application:
 
 ```powershell
 python -m pip install --upgrade pip
-python -m pip install pandas python-binance streamlit
+python -m pip install -r requirements.txt
 ```
 
 Confirm that the packages were installed into the active environment:
 
 ```powershell
-python -m pip show pandas python-binance streamlit
+python -m pip show pandas python-binance streamlit openai
 ```
 
 Do not install the package named only `binance`; it is a different library and
@@ -77,8 +78,49 @@ If you do not want to activate the environment, you can install the packages
 through its Python executable directly:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install pandas python-binance streamlit
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+## Version 2 AI advisor
+
+Version 2 adds a short AI brief beside the interval badge in the dashboard. The
+full analysis is available in the **Version 2 AI** section in the sidebar. It
+summarizes progress and results, highlights what appears right or wrong, and
+suggests small, testable improvements to settings or code.
+
+The advisor is paused by default, guaranteeing that it makes no OpenAI API
+requests. When API billing is ready, set the enable switch and an OpenAI API key
+in the same PowerShell window used to start Streamlit:
+
+```powershell
+$env:ENABLE_AI_ADVISOR = "true"
+$env:OPENAI_API_KEY = "your-openai-api-key"
+streamlit run dashboard.py
+```
+
+To pause it again, stop Streamlit and run:
+
+```powershell
+$env:ENABLE_AI_ADVISOR = "false"
+streamlit run dashboard.py
+```
+
+The default model is `gpt-5.4-mini`. You can optionally select another model
+before starting the dashboard:
+
+```powershell
+$env:OPENAI_MODEL = "gpt-5.4-mini"
+```
+
+The advisor refreshes at most once every 15 minutes and also has a manual
+**Refresh AI brief** button. Results are cached locally in `ai_brief.json`, so
+normal dashboard refreshes do not repeatedly call the API.
+
+Only summarized trading metrics, configured limits, indicators, and position
+values are sent for analysis. Binance API keys, OpenAI API keys, and order IDs
+are not included. OpenAI requests use `store=False`. The advisor cannot place
+orders or change bot settings; its output is informational and is not a profit
+guarantee. OpenAI API usage is billed separately by OpenAI.
 
 ## Configure markets and risk limits
 
@@ -177,6 +219,8 @@ The browser dashboard refreshes every five seconds and displays:
 - Live card prices and open-position progress refreshed every 10 seconds, with
   up/down direction indicators; indicator calculations still use the selected
   completed-candle interval
+- A cached Version 2 AI performance headline beside the interval badge, with a
+  detailed read-only analysis in the sidebar
 - Every currently tracked position and its stop-loss/take-profit levels
 - Available free USDT reported by the running bot
 - Current-price progress between stop loss, entry, and take profit
@@ -187,8 +231,6 @@ The browser dashboard refreshes every five seconds and displays:
   remain easy to scan
 - Every open-position card shows unit price and corresponding gross USDT position
   value at entry, current price, take profit, and stop loss
-- Header tags for every targeted symbol and its latest short bot status, such as
-  `WAITING TO BUY`, `MONITORING`, or `BUY FILLED`
 - Six read-only Binance Spot watchlist candidates with current price, 24-hour
   change, trading range, USDT volume, and a short justification
 - Filled production buy and sell orders across all configured symbols
@@ -270,6 +312,9 @@ The bot and dashboard have separate roles:
   USDT exposure. It contains no API credentials.
 - `sell_requests.jsonl` is a short-lived local queue for confirmed dashboard
   market-sell requests.
+- `advisor.py` builds sanitized performance metrics and requests the structured
+  Version 2 analysis without access to Binance credentials or order execution.
+- `ai_brief.json` is the local cache for the latest AI analysis.
 
 The bot begins recording transactions after this feature is installed. Orders
 placed before then are not present in `transactions.jsonl` and cannot appear in
