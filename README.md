@@ -302,6 +302,25 @@ other configured markets from being processed.
 The six-currency Spot watchlist is collapsed by default. Expand it only when
 you want to review the current candidates and analysis.
 
+### Overall market status
+
+The top bar shows a deterministic `MARKET` badge to set expectations. It scans
+non-stablecoin, non-leveraged Binance USDT pairs with at least 10 million USDT
+in rolling 24-hour volume and calculates:
+
+- **Up breadth:** percentage changing at least +0.5%
+- **Down breadth:** percentage changing at most -0.5%
+- **Active breadth:** percentage with at least a 1.5% high-to-low range
+- Median 24-hour change and median 24-hour range
+
+A market is classified as quiet when active breadth is below 35% or median
+range is below 1.5%. Direction is weak when median change is at most -0.5% or
+down breadth leads up breadth by at least 15 percentage points; it is positive
+when the inverse thresholds are met. A non-quiet market becomes broadly positive
+or weak at a median change of +/-1% or directional breadth of at least 60%; all
+other cases are mixed. This status describes current breadth and volatility—it
+does not predict future prices or bypass the four entry confirmations.
+
 ### Manually close a tracked position
 
 Select **Sell now** beside an open-position progress bar, review the warning,
@@ -326,7 +345,7 @@ The bot and dashboard have separate roles:
 - `bot_status.json` contains the latest available USDT and market prices used by
   the dashboard. It also contains the Binance-wide Spot portfolio estimate and
   any nonzero assets that could not be converted to USDT, plus the latest market
-  watchlist. The watchlist is
+  watchlist and overall market-breadth classification. The watchlist is
   refreshed from Binance every 15 minutes, excludes stablecoin and leveraged
   pairs, and requires at least +0.5% change, a 1.5% range, and 30 million USDT
   in rolling 24-hour volume. Qualifying pairs are ranked by 24-hour range.

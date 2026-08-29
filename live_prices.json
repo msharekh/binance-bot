@@ -1,60 +1,60 @@
 {
   "environment": "production",
-  "updated_at": 1787994558,
+  "updated_at": 1787997282,
   "prices": {
     "PUMPUSDT": {
-      "price": "0.00460400",
-      "previous_price": "0.00460400",
-      "direction": "FLAT",
-      "change_pct": "0"
+      "price": "0.00464700",
+      "previous_price": "0.00464400",
+      "direction": "UP",
+      "change_pct": "0.06459948320413436692506459948"
     },
     "SOLUSDT": {
-      "price": "103.37000000",
-      "previous_price": "103.39000000",
+      "price": "103.47000000",
+      "previous_price": "103.49000000",
       "direction": "DOWN",
-      "change_pct": "-0.01934423058322855208434084534"
+      "change_pct": "-0.01932553869939124553096917577"
     },
     "XRPUSDT": {
-      "price": "1.38300000",
-      "previous_price": "1.38300000",
-      "direction": "FLAT",
-      "change_pct": "0"
+      "price": "1.38510000",
+      "previous_price": "1.38520000",
+      "direction": "DOWN",
+      "change_pct": "-0.007219174126479930695928385793"
     },
     "ENAUSDT": {
-      "price": "0.15560000",
-      "previous_price": "0.15560000",
+      "price": "0.15700000",
+      "previous_price": "0.15700000",
       "direction": "FLAT",
       "change_pct": "0"
     },
     "HEMIUSDT": {
-      "price": "0.01179000",
-      "previous_price": "0.01182000",
-      "direction": "DOWN",
-      "change_pct": "-0.2538071065989847715736040609"
+      "price": "0.01144000",
+      "previous_price": "0.01144000",
+      "direction": "FLAT",
+      "change_pct": "0"
     },
     "SNDKBUSDT": {
-      "price": "1484.14000000",
-      "previous_price": "1484.14000000",
+      "price": "1483.94000000",
+      "previous_price": "1483.94000000",
       "direction": "FLAT",
       "change_pct": "0"
     },
     "VIRTUALUSDT": {
-      "price": "0.68050000",
-      "previous_price": "0.68050000",
+      "price": "0.68250000",
+      "previous_price": "0.68250000",
       "direction": "FLAT",
       "change_pct": "0"
     },
     "ETHUSDT": {
-      "price": "2434.55000000",
-      "previous_price": "2434.55000000",
+      "price": "2436.07000000",
+      "previous_price": "2436.07000000",
       "direction": "FLAT",
       "change_pct": "0"
     },
     "DEXEUSDT": {
-      "price": "2.36900000",
-      "previous_price": "2.37100000",
-      "direction": "DOWN",
-      "change_pct": "-0.08435259384226064951497258541"
+      "price": "2.33000000",
+      "previous_price": "2.32700000",
+      "direction": "UP",
+      "change_pct": "0.1289213579716373012462397937"
     }
   }
 }

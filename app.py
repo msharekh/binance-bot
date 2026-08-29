@@ -1,6 +1,7 @@
 import json
 import msvcrt
 import os
+import statistics
 import time
 from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
@@ -39,6 +40,7 @@ POLL_SECONDS = 60
 LIVE_PRICE_REFRESH_SECONDS = 10
 SUGGESTION_REFRESH_SECONDS = 15 * 60
 WATCHLIST_MIN_QUOTE_VOLUME = 30_000_000
+MARKET_OVERVIEW_MIN_QUOTE_VOLUME = 10_000_000
 WATCHLIST_MIN_CHANGE_PCT = 0.5
 WATCHLIST_MIN_RANGE_PCT = 1.5
 STABLE_BASE_ASSETS = {
@@ -359,7 +361,8 @@ def save_positions(positions):
 def save_status(
     available_usdt, total_portfolio_usdt, unpriced_assets, analyses,
     market_statuses, target_symbols, maximum_exposure, trade_amount,
-    max_open_positions, trading_on_hold, interval, suggestions, strategy,
+    max_open_positions, trading_on_hold, interval, suggestions, market_overview,
+    strategy,
 ):
     temporary_file = STATUS_FILE.with_suffix(".tmp")
     status = {
@@ -377,6 +380,7 @@ def save_status(
         "market_statuses": market_statuses,
         "trading_enabled": TRADING_ENABLED,
         "suggestions": suggestions,
+        "market_overview": market_overview,
         "strategy": {
             "buy_rsi_recovery": str(strategy["buy_rsi_recovery"]),
             "max_support_distance_pct": str(
@@ -592,8 +596,61 @@ def get_market_rules(client, symbol):
     }
 
 
+def classify_market_overview(markets):
+    if not markets:
+        return {
+            "regime": "DATA UNAVAILABLE",
+            "expectation": "No liquid-market sample is available.",
+            "sample_size": 0,
+        }
+
+    sample_size = len(markets)
+    up_pct = sum(item["change_pct"] >= 0.5 for item in markets) / sample_size * 100
+    down_pct = sum(item["change_pct"] <= -0.5 for item in markets) / sample_size * 100
+    active_pct = sum(item["range_pct"] >= 1.5 for item in markets) / sample_size * 100
+    median_change = statistics.median(item["change_pct"] for item in markets)
+    median_range = statistics.median(item["range_pct"] for item in markets)
+    is_quiet = active_pct < 35 or median_range < 1.5
+
+    if is_quiet:
+        if median_change <= -0.5 or down_pct >= up_pct + 15:
+            regime = "QUIET / WEAK"
+            expectation = "Expect fewer quality buys; avoid forcing entries."
+        elif median_change >= 0.5 or up_pct >= down_pct + 15:
+            regime = "QUIET / POSITIVE"
+            expectation = "Momentum is positive but participation is limited."
+        else:
+            regime = "QUIET / MIXED"
+            expectation = "Expect fewer signals and uneven price movement."
+    elif median_change >= 1 or up_pct >= 60:
+        regime = "ACTIVE / POSITIVE"
+        expectation = "Broad momentum is positive; still require entry confirmation."
+    elif median_change <= -1 or down_pct >= 60:
+        regime = "ACTIVE / WEAK"
+        expectation = "Broad selling pressure is elevated; new longs need caution."
+    else:
+        regime = "ACTIVE / MIXED"
+        expectation = "Movement is sufficient, but market direction is divided."
+
+    return {
+        "regime": regime,
+        "expectation": expectation,
+        "sample_size": sample_size,
+        "up_pct": round(up_pct, 1),
+        "down_pct": round(down_pct, 1),
+        "active_pct": round(active_pct, 1),
+        "median_change_pct": round(median_change, 2),
+        "median_range_pct": round(median_range, 2),
+        "formula": (
+            "Liquid non-stable USDT pairs: volume >= 10M; up/down threshold "
+            "+/-0.5%; active range threshold 1.5%."
+        ),
+    }
+
+
 def get_market_suggestions(client, estimated_round_trip_fee_pct):
     candidates = []
+    overview_markets = []
     for ticker in client.get_ticker():
         symbol = ticker["symbol"]
         base_asset = symbol[:-4] if symbol.endswith("USDT") else ""
@@ -608,17 +665,25 @@ def get_market_suggestions(client, estimated_round_trip_fee_pct):
         quote_volume = float(ticker["quoteVolume"])
         change_pct = float(ticker["priceChangePercent"])
         weighted_average = float(ticker["weightedAvgPrice"])
-        if (
-            quote_volume < WATCHLIST_MIN_QUOTE_VOLUME
-            or change_pct < WATCHLIST_MIN_CHANGE_PCT
-            or weighted_average <= 0
-        ):
+        if weighted_average <= 0:
             continue
         range_pct = (
             (float(ticker["highPrice"]) - float(ticker["lowPrice"]))
             / weighted_average
             * 100
         )
+        if quote_volume >= MARKET_OVERVIEW_MIN_QUOTE_VOLUME:
+            overview_markets.append(
+                {
+                    "change_pct": change_pct,
+                    "range_pct": range_pct,
+                }
+            )
+        if (
+            quote_volume < WATCHLIST_MIN_QUOTE_VOLUME
+            or change_pct < WATCHLIST_MIN_CHANGE_PCT
+        ):
+            continue
         if range_pct < WATCHLIST_MIN_RANGE_PCT:
             continue
         estimated_net_range = max(
@@ -645,7 +710,7 @@ def get_market_suggestions(client, estimated_round_trip_fee_pct):
             }
         )
     candidates.sort(key=lambda item: item["range_pct"], reverse=True)
-    return candidates[:6]
+    return candidates[:6], classify_market_overview(overview_markets)
 
 
 def round_to_step(quantity, step_size):
@@ -905,6 +970,7 @@ def main():
     positions = load_positions()
     rules_by_symbol = {}
     suggestions = []
+    market_overview = {}
     suggestions_updated_at = 0
     mode = f"{ENVIRONMENT.upper()} TRADING" if TRADING_ENABLED else "ANALYSIS ONLY"
     print(f"Multi-market bot | {mode} | Press Ctrl+C to stop")
@@ -926,7 +992,7 @@ def main():
             refresh_live_prices(client, active_symbols)
             if time.time() - suggestions_updated_at >= SUGGESTION_REFRESH_SECONDS:
                 try:
-                    suggestions = get_market_suggestions(
+                    suggestions, market_overview = get_market_suggestions(
                         client,
                         runtime_config["estimated_round_trip_fee_pct"],
                     )
@@ -977,7 +1043,7 @@ def main():
                     analyses, market_statuses, target_symbols,
                     maximum_exposure, trade_amount,
                     max_open_positions, trading_on_hold, interval, suggestions,
-                    runtime_config,
+                    market_overview, runtime_config,
                 )
             except (BinanceAPIException, BinanceOrderException) as error:
                 print(f"Could not update account status: {error}")

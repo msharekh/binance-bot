@@ -48,6 +48,12 @@ st.markdown(
     .symbol-title {color:#38bdf8;font-size:1.18rem;font-weight:800;letter-spacing:.03em}
     .target-tag {display:inline-block;padding:.28rem .58rem;margin:.12rem;border-radius:999px;
       background:#172554;color:#bfdbfe;border:1px solid #2563eb;font-weight:700}
+    .market-regime-tag {display:inline-block;padding:.28rem .58rem;margin:.12rem;
+      border-radius:999px;font-weight:800;background:#172554;color:#bfdbfe;
+      border:1px solid #2563eb}
+    .market-regime-positive {background:#052e16;color:#bbf7d0;border-color:#16a34a}
+    .market-regime-weak {background:#450a0a;color:#fecaca;border-color:#ef4444}
+    .market-regime-quiet {background:#422006;color:#fde68a;border-color:#ca8a04}
     .ai-brief-tag {display:inline-block;max-width:min(65vw,900px);padding:.28rem .58rem;
       margin:.12rem;border-radius:999px;background:#052e16;color:#bbf7d0;
       border:1px solid #16a34a;font-weight:750;white-space:nowrap;overflow:hidden;
@@ -1010,6 +1016,25 @@ def render_top_bar():
         except (KeyError, TypeError, ValueError):
             continue
     active_interval = str(status.get("interval") or config.get("interval", "15m"))
+    market_overview = status.get("market_overview", {})
+    market_regime = str(market_overview.get("regime", "WAITING FOR DATA"))
+    if "WEAK" in market_regime:
+        market_regime_style = " market-regime-weak"
+    elif "POSITIVE" in market_regime:
+        market_regime_style = " market-regime-positive"
+    elif "QUIET" in market_regime:
+        market_regime_style = " market-regime-quiet"
+    else:
+        market_regime_style = ""
+    market_regime_detail = (
+        f"{market_overview.get('expectation', 'Waiting for Binance market breadth.')} "
+        f"Sample: {market_overview.get('sample_size', 0)} | "
+        f"Up: {market_overview.get('up_pct', 'N/A')}% | "
+        f"Down: {market_overview.get('down_pct', 'N/A')}% | "
+        f"Active: {market_overview.get('active_pct', 'N/A')}% | "
+        f"Median change: {market_overview.get('median_change_pct', 'N/A')}% | "
+        f"Median range: {market_overview.get('median_range_pct', 'N/A')}%"
+    )
     advisor_enabled = ai_advisor_enabled()
     ai_brief = read_ai_brief() if advisor_enabled else {}
     if ai_brief.get("environment") not in (None, status.get("environment")):
@@ -1024,6 +1049,9 @@ def render_top_bar():
     tags = (
         f'<span class="target-tag">INTERVAL &middot; '
         f'{html.escape(active_interval)}</span>'
+        f'<span class="market-regime-tag{market_regime_style}" '
+        f'title="{html.escape(market_regime_detail)}">MARKET &middot; '
+        f'{html.escape(market_regime)}</span>'
         f'<span class="ai-brief-tag{ai_style}" '
         f'title="Open AI Advisor in the sidebar">AI &middot; '
         f'{html.escape(ai_headline)}</span>'

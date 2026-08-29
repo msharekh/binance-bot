@@ -135,10 +135,26 @@ class StrategySignalTests(unittest.TestCase):
         self.assertFalse(analysis["buy_signal"])
 
     def test_watchlist_excludes_stablecoins_and_low_range_pairs(self):
-        suggestions = app.get_market_suggestions(FakeTickerClient(), 0.20)
+        suggestions, overview = app.get_market_suggestions(
+            FakeTickerClient(), 0.20
+        )
 
         self.assertEqual([item["symbol"] for item in suggestions], ["ACTIVEUSDT"])
         self.assertIn("after estimated costs", suggestions[0]["analysis"])
+        self.assertEqual(overview["sample_size"], 2)
+
+    def test_market_overview_identifies_quiet_weak_breadth(self):
+        overview = app.classify_market_overview(
+            [
+                {"change_pct": -1.0, "range_pct": 1.0},
+                {"change_pct": -0.8, "range_pct": 1.2},
+                {"change_pct": -0.4, "range_pct": 0.9},
+                {"change_pct": 0.1, "range_pct": 1.1},
+            ]
+        )
+
+        self.assertEqual(overview["regime"], "QUIET / WEAK")
+        self.assertEqual(overview["active_pct"], 0.0)
 
     def test_spot_portfolio_includes_free_locked_and_bridged_assets(self):
         available, total, unpriced = app.get_spot_portfolio_value(
