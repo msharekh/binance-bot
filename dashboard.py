@@ -59,6 +59,9 @@ st.markdown(
     .market-regime-positive {background:#052e16;color:#bbf7d0;border-color:#16a34a}
     .market-regime-weak {background:#450a0a;color:#fecaca;border-color:#ef4444}
     .market-regime-quiet {background:#422006;color:#fde68a;border-color:#ca8a04}
+    .bot-health-online {background:#052e16;color:#bbf7d0;border-color:#16a34a}
+    .bot-health-delayed {background:#422006;color:#fde68a;border-color:#ca8a04}
+    .bot-health-offline {background:#450a0a;color:#fecaca;border-color:#ef4444}
     .ai-brief-tag {display:inline-block;max-width:min(65vw,900px);padding:.28rem .58rem;
       margin:.12rem;border-radius:999px;background:#052e16;color:#bbf7d0;
       border:1px solid #16a34a;font-weight:750;white-space:nowrap;overflow:hidden;
@@ -88,7 +91,9 @@ st.markdown(
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
       margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
-    .summary-grid {display:grid;grid-template-columns:repeat(12,minmax(90px,1fr));gap:.45rem}
+    .summary-grid {display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:.45rem}
+    .secondary-summary-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+      gap:.45rem}
     .summary-item {padding:.42rem .55rem;border-radius:.5rem;background:#0f172a}
     .summary-label {color:#cbd5e1;font-size:.9rem;text-transform:uppercase;font-weight:800}
     .summary-value {color:#f8fafc;font-size:1.5rem;font-weight:900;line-height:1.2}
@@ -96,9 +101,9 @@ st.markdown(
     .hold-banner {padding:.55rem .75rem;margin-bottom:.5rem;border-radius:.5rem;
       background:#7c2d12;color:#ffedd5;border:1px solid #f97316;
       font-size:1.05rem;font-weight:900;text-align:center;letter-spacing:.04em}
-    .market-check-row {display:flex;gap:.3rem;overflow-x:auto;padding-bottom:.18rem;
-      scrollbar-width:thin}
-    .market-check-card {flex:0 0 225px;padding:.34rem .42rem;margin-bottom:.2rem;
+    .market-check-row {display:grid;grid-template-columns:repeat(auto-fit,minmax(225px,1fr));
+      gap:.35rem;padding-bottom:.18rem}
+    .market-check-card {padding:.34rem .42rem;margin-bottom:.2rem;
       border-radius:.5rem;background:#0f172a;border:1px solid #475569}
     .market-check-buy {border-color:#22c55e;background:linear-gradient(135deg,#052e16,#0f172a)}
     .market-check-sell,.market-check-error {border-color:#ef4444;background:linear-gradient(135deg,#450a0a,#0f172a)}
@@ -129,7 +134,9 @@ st.markdown(
       box-shadow:0 0 22px currentColor}100%{filter:brightness(1);transform:scale(1);
       box-shadow:none}}
     .market-check-flash {animation:market-cycle-flash 1.15s ease-out}
-    @media(max-width:900px){.summary-grid{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:1200px){.summary-grid{grid-template-columns:repeat(3,1fr)}}
+    @media(max-width:700px){.summary-grid{grid-template-columns:repeat(2,1fr)}
+      .market-check-row{grid-template-columns:1fr}}
     </style>
     """,
     unsafe_allow_html=True,
@@ -614,7 +621,9 @@ def render_position_progress(
 
 def render_market_suggestions(status):
     suggestions = status.get("suggestions", [])
-    with st.expander("30 Spot watchlist candidates", expanded=False):
+    with st.expander(
+        f"Spot watchlist candidates ({len(suggestions)})", expanded=False
+    ):
         st.caption(
             "Read-only screen: stablecoins excluded; requires a 1.5% range "
             "and 10M USDT volume, then ranks by range. "
@@ -763,6 +772,7 @@ def format_market_number(value, decimals=8):
 
 @st.fragment(run_every=5)
 def render_market_check_cards():
+    state = read_state()
     status = read_json(STATUS_FILE, {})
     live_prices = read_json(LIVE_PRICE_FILE, {})
     if live_prices.get("environment") != status.get("environment"):
@@ -770,6 +780,8 @@ def render_market_check_cards():
     live_markets = live_prices.get("prices", {})
     markets = status.get("markets", {})
     target_symbols = status.get("target_symbols", [])
+    open_symbols = set(state.get("positions", {}))
+    buy_check_names = ("rsi_recovered", "near_support", "trend_ok", "reward_ok")
     updated_at = status.get("updated_at")
     visual_updated_at = live_prices.get("updated_at") or updated_at
     previous_update = st.session_state.get("market_cards_updated_at")
@@ -807,8 +819,43 @@ def render_market_check_cards():
     else:
         st.warning("WAITING FOR BOT STATUS - start app.py to receive market checks.")
 
+    def readiness_score(symbol):
+        market = markets.get(symbol, {})
+        return sum(bool(market.get(name)) for name in buy_check_names)
+
+    ordered_symbols = sorted(
+        target_symbols,
+        key=lambda symbol: (
+            symbol not in open_symbols,
+            -readiness_score(symbol),
+            symbol,
+        ),
+    )
+    market_view = st.radio(
+        "Market card view",
+        ("All targets", "Closest to buy", "3–4 checks", "Open positions"),
+        horizontal=True,
+        label_visibility="collapsed",
+        key="market_card_view",
+    )
+    if market_view == "Closest to buy":
+        ordered_symbols = [
+            symbol for symbol in ordered_symbols if symbol not in open_symbols
+        ][:6]
+    elif market_view == "3–4 checks":
+        ordered_symbols = [
+            symbol for symbol in ordered_symbols if readiness_score(symbol) >= 3
+        ]
+    elif market_view == "Open positions":
+        ordered_symbols = [
+            symbol for symbol in ordered_symbols if symbol in open_symbols
+        ]
+    if not ordered_symbols:
+        st.info(f"No markets match the {market_view.lower()} view.")
+        return
+
     cards = []
-    for symbol in target_symbols:
+    for symbol in ordered_symbols:
         market = markets.get(symbol, {})
         live_market = live_markets.get(symbol, {})
         display_price = live_market.get("price", market.get("price"))
@@ -824,7 +871,9 @@ def render_market_check_cards():
             or status.get("market_statuses", {}).get(symbol, "CHECK PENDING")
         )
         signal = str(market.get("signal", "CHECK PENDING"))
-        buy_check_names = ("rsi_recovered", "near_support", "trend_ok", "reward_ok")
+        display_signal = signal
+        if "SELL" in signal and symbol not in open_symbols:
+            display_signal = "OVERBOUGHT · NO POSITION"
         has_buy_checks = any(name in market for name in buy_check_names)
         buy_check_label = (
             f" · {sum(bool(market.get(name)) for name in buy_check_names)}/4 CHECKS"
@@ -857,7 +906,7 @@ def render_market_check_cards():
             color_class = "market-check-error"
         elif "BUY" in signal:
             color_class = "market-check-buy"
-        elif "SELL" in signal:
+        elif "SELL" in signal and symbol in open_symbols:
             color_class = "market-check-sell"
         elif market_status == "MONITORING":
             color_class = "market-check-monitoring"
@@ -871,7 +920,7 @@ def render_market_check_cards():
             f'<span class="market-check-status" title="{html.escape(market_status)}">'
             f'{html.escape(market_status)}</span></div>'
             f'<div class="market-check-signal">'
-            f'{html.escape(signal + buy_check_label)}</div>'
+            f'{html.escape(display_signal + buy_check_label)}</div>'
             f'{buy_check_html}'
             f'<div class="market-check-grid">'
             f'<div class="market-check-stat">Price'
@@ -1018,6 +1067,7 @@ def render_top_bar():
     today_pnl = 0.0
     today_unrealized_pnl = 0.0
     usdt_in_trades = 0.0
+    entry_exposure = 0.0
     today_win_rate = None
     all_win_rate = None
     if not history.empty:
@@ -1046,6 +1096,7 @@ def render_top_bar():
                 )
             )
             usdt_in_trades += current * quantity
+            entry_exposure += entry * quantity
             today_unrealized_pnl += (current - entry) * quantity
         except (KeyError, TypeError, ValueError):
             continue
@@ -1081,6 +1132,24 @@ def render_top_bar():
         )
     )
     ai_style = "" if ai_brief else " ai-brief-waiting"
+    status_updated_at = status.get("updated_at")
+    if status_updated_at:
+        status_age = max(0, int(time.time() - float(status_updated_at)))
+        if status_age <= 120:
+            bot_health = "ONLINE"
+            bot_health_style = " bot-health-online"
+        elif status_age <= 300:
+            bot_health = "DELAYED"
+            bot_health_style = " bot-health-delayed"
+        else:
+            bot_health = "OFFLINE"
+            bot_health_style = " bot-health-offline"
+        bot_health_detail = f"Last completed market check {status_age} seconds ago."
+    else:
+        status_age = None
+        bot_health = "WAITING"
+        bot_health_style = " bot-health-offline"
+        bot_health_detail = "No completed market check is available."
     tags = (
         f'<span class="target-tag">INTERVAL &middot; '
         f'{html.escape(active_interval)}</span>'
@@ -1090,6 +1159,9 @@ def render_top_bar():
         f'<span class="ai-brief-tag{ai_style}" '
         f'title="Open AI Advisor in the sidebar">AI &middot; '
         f'{html.escape(ai_headline)}</span>'
+        f'<span class="market-regime-tag{bot_health_style}" '
+        f'title="{html.escape(bot_health_detail)}">BOT &middot; '
+        f'{html.escape(bot_health)}</span>'
     )
     today_class = "pnl-positive" if today_pnl >= 0 else "pnl-negative"
     today_unrealized_class = (
@@ -1136,23 +1208,32 @@ def render_top_bar():
           {hold_banner}
           <div class="summary-grid">
             <div class="summary-item"><div class="summary-label">Available USDT</div><div class="summary-value">{available_text}</div></div>
-            <div class="summary-item" title="Current market price multiplied by tracked quantity for all open positions"><div class="summary-label">USDT in trades</div><div class="summary-value">{usdt_in_trades:,.2f}</div></div>
-            <div class="summary-item" title="Available USDT plus the current market value of bot-tracked open positions"><div class="summary-label">Bot tracked total</div><div class="summary-value">{tracked_total_text}</div></div>
-            <div class="summary-item" title="{html.escape(binance_portfolio_note)}"><div class="summary-label">Binance Spot total</div><div class="summary-value">{binance_portfolio_text}</div></div>
             <div class="summary-item"><div class="summary-label">Open / max positions</div><div class="summary-value">{len(positions)} / {max_open_positions}</div></div>
-            <div class="summary-item"><div class="summary-label">Per-trade max</div><div class="summary-value">{trade_amount_text}</div></div>
-            <div class="summary-item"><div class="summary-label">Max total exposure</div><div class="summary-value">{float(maximum):,.2f}</div></div>
+            <div class="summary-item"><div class="summary-label">Exposure / max</div><div class="summary-value">{entry_exposure:,.2f} / {float(maximum):,.2f}</div></div>
             <div class="summary-item"><div class="summary-label">Today realized P&amp;L</div><div class="summary-value {today_class}">{today_pnl:+,.4f}</div></div>
             <div class="summary-item" title="Current mark-to-entry P&amp;L for all open positions"><div class="summary-label">Today unrealized P&amp;L</div><div class="summary-value {today_unrealized_class}">{today_unrealized_pnl:+,.4f}</div></div>
-            <div class="summary-item" title="Profitable completed sells divided by all completed sells today"><div class="summary-label">Today win rate</div><div class="summary-value">{today_win_rate_text}</div></div>
-            <div class="summary-item" title="Profitable completed sells divided by all recorded completed sells"><div class="summary-label">All win rate</div><div class="summary-value">{all_win_rate_text}</div></div>
-            <div class="summary-item"><div class="summary-label">Total realized P&amp;L</div><div class="summary-value {total_class}">{total_pnl:+,.4f}</div></div>
+            <div class="summary-item" title="{html.escape(bot_health_detail)}"><div class="summary-label">Bot health</div><div class="summary-value">{html.escape(bot_health)}</div></div>
           </div>
           <div class="summary-tags">{tags}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    with st.expander("More account and performance metrics", expanded=False):
+        st.markdown(
+            f"""
+            <div class="secondary-summary-grid">
+              <div class="summary-item" title="Current market price multiplied by tracked quantity"><div class="summary-label">USDT in trades</div><div class="summary-value">{usdt_in_trades:,.2f}</div></div>
+              <div class="summary-item" title="Available USDT plus tracked open positions"><div class="summary-label">Bot tracked total</div><div class="summary-value">{tracked_total_text}</div></div>
+              <div class="summary-item" title="{html.escape(binance_portfolio_note)}"><div class="summary-label">Binance Spot total</div><div class="summary-value">{binance_portfolio_text}</div></div>
+              <div class="summary-item"><div class="summary-label">Per-trade max</div><div class="summary-value">{trade_amount_text}</div></div>
+              <div class="summary-item"><div class="summary-label">Today win rate</div><div class="summary-value">{today_win_rate_text}</div></div>
+              <div class="summary-item"><div class="summary-label">All win rate</div><div class="summary-value">{all_win_rate_text}</div></div>
+              <div class="summary-item"><div class="summary-label">Total realized P&amp;L</div><div class="summary-value {total_class}">{total_pnl:+,.4f}</div></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 @st.fragment(run_every=5)
@@ -1173,8 +1254,8 @@ def render_dashboard():
     live_markets = live_prices.get("prices", {})
     history = transaction_frame(read_transactions())
 
-    st.subheader("Position exit progress")
     if positions:
+        st.subheader("Position exit progress")
         position_items = list(positions.items())
         for start in range(0, len(position_items), 2):
             columns = st.columns(2, gap="small")
@@ -1191,9 +1272,6 @@ def render_dashboard():
                             bool(status.get("trading_enabled", False)),
                             status.get("environment", state["environment"]),
                         )
-    else:
-        st.info("No positions are currently tracked.")
-
     render_results_by_symbol(history)
     render_market_suggestions(status)
 
@@ -1202,24 +1280,36 @@ def render_dashboard():
         st.info("No filled transactions have been recorded yet.")
         return
     filtered = filter_history(history).sort_values("Time", ascending=False)
-    display_columns = [
+    detail_columns = [
         "Time", "Environment", "Side", "Result", "Symbol", "Quantity", "Price",
         "Value", "Quote asset", "Est. P&L (USDT)", "Reason", "Order ID",
     ]
+    compact_columns = [
+        "Time", "Symbol", "Side", "Result", "Value", "Est. P&L (USDT)", "Reason",
+    ]
     filtered = filtered.copy()
     filtered["Result"] = filtered.apply(transaction_result, axis=1)
-    for column in display_columns:
+    for column in detail_columns:
         if column not in filtered:
             filtered[column] = None
-    display_frame = filtered[display_columns]
-    styled_frame = display_frame.style.apply(style_transaction_row, axis=1).format(
+    detail_frame = filtered[detail_columns]
+    compact_frame = filtered[compact_columns]
+    styled_frame = compact_frame.style.apply(style_transaction_row, axis=1).format(
         {"Est. P&L (USDT)": lambda value: f"{value:+,.4f}"},
         na_rep="—",
     )
     st.dataframe(styled_frame, hide_index=True, width="stretch")
+    with st.expander("Detailed transaction columns", expanded=False):
+        detailed_style = detail_frame.style.apply(
+            style_transaction_row, axis=1
+        ).format(
+            {"Est. P&L (USDT)": lambda value: f"{value:+,.4f}"},
+            na_rep="—",
+        )
+        st.dataframe(detailed_style, hide_index=True, width="stretch")
     st.download_button(
         "Download filtered transaction CSV",
-        display_frame.to_csv(index=False),
+        detail_frame.to_csv(index=False),
         file_name="binance_filtered_transactions.csv",
         mime="text/csv",
     )

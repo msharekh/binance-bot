@@ -213,16 +213,19 @@ http://localhost:8501
 
 The browser dashboard refreshes every five seconds and displays:
 
-- A sticky top summary bar with available USDT, current USDT market value across
-  open trades, their combined bot-tracked value, the Binance-wide Spot portfolio
-  estimate, open-position count, maximum per-trade amount, maximum total
-  exposure, today's realized P&L, current
-  unrealized P&L for open positions, today's and all-time completed-trade win
-  rates, total realized P&L, and the active interval
+- A sticky top summary bar with available USDT, open-position and exposure
+  limits, today's realized and unrealized P&L, bot freshness, active interval,
+  and market regime; broader account and performance metrics stay in a compact
+  expandable section
 - Color-coded market-check cards that flash after each new bot cycle and show
   price, RSI, ATR, support, resistance, signal, suggested SL/TP, and bot status
 - A four-item checklist on every market card that highlights passed buy checks
   in green and remaining checks in red
+- Readiness-sorted market cards in a responsive grid, with views for all
+  targets, the six closest setups, markets passing three or four checks, and
+  open positions
+- A compact primary summary with bot-health freshness and secondary account and
+  performance metrics available on demand
 - Live card prices and open-position progress refreshed every 10 seconds, with
   up/down direction indicators; indicator calculations still use the selected
   completed-candle interval
@@ -238,7 +241,8 @@ The browser dashboard refreshes every five seconds and displays:
   remain easy to scan
 - Every open-position card shows unit price and corresponding gross USDT position
   value at entry, current price, take profit, and stop loss
-- Up to 30 read-only Binance Spot watchlist candidates with current price, 24-hour
+- Up to 30 read-only Binance Spot watchlist candidates with a live candidate
+  count, current price, 24-hour
   change, trading range, USDT volume, and a short justification
 - Filled production buy and sell orders across all configured symbols
 - Completed-trade results grouped by symbol, including win rate and estimated P&L
