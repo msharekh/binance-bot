@@ -1033,7 +1033,8 @@ def render_top_bar():
         f"Down: {market_overview.get('down_pct', 'N/A')}% | "
         f"Active: {market_overview.get('active_pct', 'N/A')}% | "
         f"Median change: {market_overview.get('median_change_pct', 'N/A')}% | "
-        f"Median range: {market_overview.get('median_range_pct', 'N/A')}%"
+        f"Median range: {market_overview.get('median_range_pct', 'N/A')}% | "
+        f"{market_overview.get('formula', '')}"
     )
     advisor_enabled = ai_advisor_enabled()
     ai_brief = read_ai_brief() if advisor_enabled else {}

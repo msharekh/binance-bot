@@ -308,18 +308,24 @@ The top bar shows a deterministic `MARKET` badge to set expectations. It scans
 non-stablecoin, non-leveraged Binance USDT pairs with at least 10 million USDT
 in rolling 24-hour volume and calculates:
 
-- **Up breadth:** percentage changing at least +0.5%
-- **Down breadth:** percentage changing at most -0.5%
-- **Active breadth:** percentage with at least a 1.5% high-to-low range
+- **Up breadth:** percentage changing at least +1.5%
+- **Down breadth:** percentage changing at most -1.5%
+- **Active breadth:** percentage with at least a 3.0% logarithmic range,
+  calculated as `100 × ln(high / low)`
 - Median 24-hour change and median 24-hour range
 
 A market is classified as quiet when active breadth is below 35% or median
-range is below 1.5%. Direction is weak when median change is at most -0.5% or
-down breadth leads up breadth by at least 15 percentage points; it is positive
-when the inverse thresholds are met. A non-quiet market becomes broadly positive
-or weak at a median change of +/-1% or directional breadth of at least 60%; all
-other cases are mixed. This status describes current breadth and volatility—it
-does not predict future prices or bypass the four entry confirmations.
+logarithmic range is below 3.0%. Within a quiet market, direction is weak when
+median change is at most -1.0% or down breadth leads up breadth by at least 15
+percentage points; it is positive when the inverse thresholds are met. A
+non-quiet market becomes broadly positive or weak at a median change of +/-1%
+or directional breadth of at least 60%; all other cases are mixed. This status
+describes current breadth and volatility—it does not predict future prices or
+bypass the four entry confirmations.
+
+Each 15-minute breadth result is appended to `market_overview_history.jsonl`.
+After 7–14 days, these observations can be used to replace provisional fixed
+thresholds with percentiles calibrated to this bot's liquid Binance universe.
 
 ### Manually close a tracked position
 
@@ -351,6 +357,8 @@ The bot and dashboard have separate roles:
   in rolling 24-hour volume. Qualifying pairs are ranked by 24-hour range.
 - `bot_config.json` contains dashboard-confirmed target symbols and maximum total
   USDT exposure. It contains no API credentials.
+- `market_overview_history.jsonl` stores 15-minute market-regime observations for
+  later threshold calibration.
 - `sell_requests.jsonl` is a short-lived local queue for confirmed dashboard
   market-sell requests.
 - `advisor.py` builds sanitized performance metrics and requests the structured

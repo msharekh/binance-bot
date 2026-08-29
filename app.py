@@ -1,4 +1,5 @@
 import json
+import math
 import msvcrt
 import os
 import statistics
@@ -43,6 +44,10 @@ WATCHLIST_MIN_QUOTE_VOLUME = 30_000_000
 MARKET_OVERVIEW_MIN_QUOTE_VOLUME = 10_000_000
 WATCHLIST_MIN_CHANGE_PCT = 0.5
 WATCHLIST_MIN_RANGE_PCT = 1.5
+MARKET_DIRECTION_THRESHOLD_PCT = 1.5
+MARKET_MEDIAN_DIRECTION_THRESHOLD_PCT = 1.0
+MARKET_ACTIVE_RANGE_PCT = 3.0
+MARKET_QUIET_ACTIVE_BREADTH_PCT = 35.0
 STABLE_BASE_ASSETS = {
     "AEUR", "BFUSD", "DAI", "EUR", "FDUSD", "PYUSD", "RLUSD", "TUSD",
     "TRY", "USDC", "USDE", "USDP", "USDS", "USD1",
@@ -68,6 +73,9 @@ TRANSACTION_FILE = Path(__file__).with_name("transactions.jsonl")
 STATUS_FILE = Path(__file__).with_name("bot_status.json")
 LIVE_PRICE_FILE = Path(__file__).with_name("live_prices.json")
 CONFIG_FILE = Path(__file__).with_name("bot_config.json")
+MARKET_OVERVIEW_HISTORY_FILE = Path(__file__).with_name(
+    "market_overview_history.jsonl"
+)
 SELL_REQUEST_FILE = Path(__file__).with_name("sell_requests.jsonl")
 SELL_PROCESSING_FILE = Path(__file__).with_name("sell_requests.processing.jsonl")
 LOCK_FILE = Path(__file__).with_name("bot.lock")
@@ -605,27 +613,42 @@ def classify_market_overview(markets):
         }
 
     sample_size = len(markets)
-    up_pct = sum(item["change_pct"] >= 0.5 for item in markets) / sample_size * 100
-    down_pct = sum(item["change_pct"] <= -0.5 for item in markets) / sample_size * 100
-    active_pct = sum(item["range_pct"] >= 1.5 for item in markets) / sample_size * 100
+    up_pct = sum(
+        item["change_pct"] >= MARKET_DIRECTION_THRESHOLD_PCT for item in markets
+    ) / sample_size * 100
+    down_pct = sum(
+        item["change_pct"] <= -MARKET_DIRECTION_THRESHOLD_PCT for item in markets
+    ) / sample_size * 100
+    active_pct = sum(
+        item["range_pct"] >= MARKET_ACTIVE_RANGE_PCT for item in markets
+    ) / sample_size * 100
     median_change = statistics.median(item["change_pct"] for item in markets)
     median_range = statistics.median(item["range_pct"] for item in markets)
-    is_quiet = active_pct < 35 or median_range < 1.5
+    is_quiet = (
+        active_pct < MARKET_QUIET_ACTIVE_BREADTH_PCT
+        or median_range < MARKET_ACTIVE_RANGE_PCT
+    )
 
     if is_quiet:
-        if median_change <= -0.5 or down_pct >= up_pct + 15:
+        if (
+            median_change <= -MARKET_MEDIAN_DIRECTION_THRESHOLD_PCT
+            or down_pct >= up_pct + 15
+        ):
             regime = "QUIET / WEAK"
             expectation = "Expect fewer quality buys; avoid forcing entries."
-        elif median_change >= 0.5 or up_pct >= down_pct + 15:
+        elif (
+            median_change >= MARKET_MEDIAN_DIRECTION_THRESHOLD_PCT
+            or up_pct >= down_pct + 15
+        ):
             regime = "QUIET / POSITIVE"
             expectation = "Momentum is positive but participation is limited."
         else:
             regime = "QUIET / MIXED"
             expectation = "Expect fewer signals and uneven price movement."
-    elif median_change >= 1 or up_pct >= 60:
+    elif median_change >= MARKET_MEDIAN_DIRECTION_THRESHOLD_PCT or up_pct >= 60:
         regime = "ACTIVE / POSITIVE"
         expectation = "Broad momentum is positive; still require entry confirmation."
-    elif median_change <= -1 or down_pct >= 60:
+    elif median_change <= -MARKET_MEDIAN_DIRECTION_THRESHOLD_PCT or down_pct >= 60:
         regime = "ACTIVE / WEAK"
         expectation = "Broad selling pressure is elevated; new longs need caution."
     else:
@@ -643,9 +666,23 @@ def classify_market_overview(markets):
         "median_range_pct": round(median_range, 2),
         "formula": (
             "Liquid non-stable USDT pairs: volume >= 10M; up/down threshold "
-            "+/-0.5%; active range threshold 1.5%."
+            "+/-1.5%; active logarithmic range threshold 3.0%; quiet active "
+            "breadth threshold 35%; median direction threshold +/-1.0%."
         ),
     }
+
+
+def record_market_overview(overview):
+    record = {
+        "recorded_at": int(time.time()),
+        "environment": ENVIRONMENT,
+        **overview,
+    }
+    try:
+        with MARKET_OVERVIEW_HISTORY_FILE.open("a", encoding="utf-8") as history:
+            history.write(json.dumps(record) + "\n")
+    except OSError as error:
+        print(f"Could not record market overview history: {error}")
 
 
 def get_market_suggestions(client, estimated_round_trip_fee_pct):
@@ -667,11 +704,11 @@ def get_market_suggestions(client, estimated_round_trip_fee_pct):
         weighted_average = float(ticker["weightedAvgPrice"])
         if weighted_average <= 0:
             continue
-        range_pct = (
-            (float(ticker["highPrice"]) - float(ticker["lowPrice"]))
-            / weighted_average
-            * 100
-        )
+        high_price = float(ticker["highPrice"])
+        low_price = float(ticker["lowPrice"])
+        if high_price <= 0 or low_price <= 0 or high_price < low_price:
+            continue
+        range_pct = math.log(high_price / low_price) * 100
         if quote_volume >= MARKET_OVERVIEW_MIN_QUOTE_VOLUME:
             overview_markets.append(
                 {
@@ -996,6 +1033,7 @@ def main():
                         client,
                         runtime_config["estimated_round_trip_fee_pct"],
                     )
+                    record_market_overview(market_overview)
                     suggestions_updated_at = time.time()
                 except BinanceAPIException as error:
                     print(f"Could not refresh market suggestions: {error}")

@@ -146,9 +146,9 @@ class StrategySignalTests(unittest.TestCase):
     def test_market_overview_identifies_quiet_weak_breadth(self):
         overview = app.classify_market_overview(
             [
-                {"change_pct": -1.0, "range_pct": 1.0},
-                {"change_pct": -0.8, "range_pct": 1.2},
-                {"change_pct": -0.4, "range_pct": 0.9},
+                {"change_pct": -2.0, "range_pct": 1.0},
+                {"change_pct": -1.8, "range_pct": 1.2},
+                {"change_pct": -1.6, "range_pct": 0.9},
                 {"change_pct": 0.1, "range_pct": 1.1},
             ]
         )

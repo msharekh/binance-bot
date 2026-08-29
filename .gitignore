@@ -7,6 +7,7 @@ bot_status.json
 live_prices.json
 ai_brief.json
 ai_advisor.lock
+market_overview_history.jsonl
 bot_config.json
 sell_requests.jsonl
 sell_requests.processing.jsonl
