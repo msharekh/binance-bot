@@ -170,8 +170,8 @@ http://localhost:8501
 The browser dashboard refreshes every five seconds and displays:
 
 - A sticky top summary bar with available USDT, open-position count, maximum
-  per-trade amount, maximum total exposure, today's realized P&L, total realized
-  P&L, and compact symbol/status tags
+  per-trade amount, maximum total exposure, today's realized P&L, current
+  unrealized P&L for open positions, total realized P&L, and the active interval
 - Color-coded market-check cards that flash after each new bot cycle and show
   price, RSI, ATR, support, resistance, signal, suggested SL/TP, and bot status
 - Live card prices and open-position progress refreshed every 10 seconds, with
@@ -210,14 +210,14 @@ symbols. Enter:
 - A maximum number of simultaneously open positions
 - A candle interval from the dropdown: `1m`, `3m`, `5m`, `15m`, `30m`, `1h`,
   `2h`, `4h`, `6h`, `8h`, `12h`, `1d`, `3d`, `1w`, or `1M`
-- Comma-separated Binance USDT Spot symbols such as
-  `BTCUSDT,ETHUSDT,SOLUSDT`
+- Binance USDT Spot symbol tags such as `BTCUSDT`, `ETHUSDT`, and `SOLUSDT`;
+  type a pair and press Enter to add it, or select × to remove it
 - Optionally enable **Hold new buys** to pause new entries
 
 Select **Save and confirm settings**. The settings are written to
 `bot_config.json`, and the running bot loads them at the start of its next
-analysis cycle. The dashboard refuses to remove a symbol that has an open
-position, so the bot can continue monitoring its exit.
+analysis cycle. If you remove a target that still has an open position, the bot
+continues monitoring that position until it closes but does not seek a new entry.
 
 After the dashboard saves `max_open_positions` in `bot_config.json`, that value
 overrides the `$env:MAX_OPEN_POSITIONS` default. You can safely set it below the

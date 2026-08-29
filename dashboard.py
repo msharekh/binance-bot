@@ -55,7 +55,7 @@ st.markdown(
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
       margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
-    .summary-grid {display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:.45rem}
+    .summary-grid {display:grid;grid-template-columns:repeat(7,minmax(105px,1fr));gap:.45rem}
     .summary-item {padding:.42rem .55rem;border-radius:.5rem;background:#0f172a}
     .summary-label {color:#cbd5e1;font-size:.9rem;text-transform:uppercase;font-weight:800}
     .summary-value {color:#f8fafc;font-size:1.5rem;font-weight:900;line-height:1.2}
@@ -159,7 +159,6 @@ def queue_sell_request(symbol, environment):
 
 
 def render_settings_panel():
-    state = read_state()
     status = read_json(STATUS_FILE, {})
     config = read_json(CONFIG_FILE, {})
     symbols = config.get("target_symbols") or status.get("target_symbols") or []
@@ -179,6 +178,12 @@ def render_settings_panel():
     interval = str(config.get("interval") or status.get("interval", "15m"))
     if interval not in INTERVAL_OPTIONS:
         interval = "15m"
+    suggested_symbols = [
+        str(suggestion.get("symbol", "")).strip().upper()
+        for suggestion in status.get("suggestions", [])
+        if suggestion.get("symbol")
+    ]
+    symbol_options = list(dict.fromkeys(list(symbols) + suggested_symbols))
     with st.expander("Trading targets and exposure", expanded=False):
         st.caption(
             f"Per trade: {float(trade_amount):,.2f} USDT | "
@@ -221,11 +226,16 @@ def render_settings_panel():
                     index=INTERVAL_OPTIONS.index(interval),
                     help="Timeframe used to calculate indicators and buy signals.",
                 )
-            symbols_input = st.text_input(
+            symbols_input = st.multiselect(
                 "Targeted Spot symbols",
-                value=",".join(symbols),
-                placeholder="BTCUSDT,ETHUSDT,SOLUSDT",
-                help="Enter comma-separated Binance USDT Spot symbols.",
+                options=symbol_options,
+                default=symbols,
+                accept_new_options=True,
+                placeholder="Type BTCUSDT, then press Enter",
+                help=(
+                    "Type a complete USDT pair and press Enter to add it. "
+                    "Select × on a tag to remove it."
+                ),
             )
             hold_input = st.toggle(
                 "Hold new buys",
@@ -240,7 +250,7 @@ def render_settings_panel():
             parsed_symbols = list(
                 dict.fromkeys(
                     symbol.strip().upper()
-                    for symbol in symbols_input.split(",")
+                    for symbol in symbols_input
                     if symbol.strip()
                 )
             )
@@ -249,17 +259,10 @@ def render_settings_panel():
                 for symbol in parsed_symbols
                 if not re.fullmatch(r"[A-Z0-9]+USDT", symbol)
             ]
-            open_symbols = set(state.get("positions", {}))
-            removed_open_symbols = open_symbols - set(parsed_symbols)
             if not parsed_symbols:
                 st.error("Enter at least one targeted USDT symbol.")
             elif invalid:
                 st.error("Invalid USDT symbols: " + ", ".join(invalid))
-            elif removed_open_symbols:
-                st.error(
-                    "Keep symbols with open positions: "
-                    + ", ".join(sorted(removed_open_symbols))
-                )
             elif trade_amount_input > maximum_input:
                 st.error("Per-trade amount cannot exceed maximum total exposure.")
             else:
@@ -619,6 +622,10 @@ def render_top_bar():
     state = read_state()
     status = read_json(STATUS_FILE, {})
     config = read_json(CONFIG_FILE, {})
+    live_prices = read_json(LIVE_PRICE_FILE, {})
+    if live_prices.get("environment") != status.get("environment"):
+        live_prices = {}
+    live_markets = live_prices.get("prices", {})
     history = transaction_frame(read_transactions())
     positions = state.get("positions", {})
     available = status.get("available_usdt")
@@ -637,6 +644,7 @@ def render_top_bar():
     )
     total_pnl = 0.0
     today_pnl = 0.0
+    today_unrealized_pnl = 0.0
     if not history.empty:
         sells = history[history["Side"] == "SELL"]
         total_pnl = float(sells["Est. P&L (USDT)"].sum())
@@ -646,12 +654,28 @@ def render_top_bar():
                 "Est. P&L (USDT)",
             ].sum()
         )
+    status_markets = status.get("markets", {})
+    for symbol, position in positions.items():
+        try:
+            entry = float(position["entry"])
+            quantity = float(position["quantity"])
+            current = float(
+                live_markets.get(symbol, {}).get(
+                    "price", status_markets.get(symbol, {}).get("price", entry)
+                )
+            )
+            today_unrealized_pnl += (current - entry) * quantity
+        except (KeyError, TypeError, ValueError):
+            continue
     active_interval = str(status.get("interval") or config.get("interval", "15m"))
     tags = (
         f'<span class="target-tag">INTERVAL &middot; '
         f'{html.escape(active_interval)}</span>'
     )
     today_class = "pnl-positive" if today_pnl >= 0 else "pnl-negative"
+    today_unrealized_class = (
+        "pnl-positive" if today_unrealized_pnl >= 0 else "pnl-negative"
+    )
     total_class = "pnl-positive" if total_pnl >= 0 else "pnl-negative"
     available_text = f"{float(available):,.2f}" if available is not None else "N/A"
     trade_amount_text = (
@@ -673,6 +697,7 @@ def render_top_bar():
             <div class="summary-item"><div class="summary-label">Per-trade max</div><div class="summary-value">{trade_amount_text}</div></div>
             <div class="summary-item"><div class="summary-label">Max total exposure</div><div class="summary-value">{float(maximum):,.2f}</div></div>
             <div class="summary-item"><div class="summary-label">Today realized P&amp;L</div><div class="summary-value {today_class}">{today_pnl:+,.4f}</div></div>
+            <div class="summary-item" title="Current mark-to-entry P&amp;L for all open positions"><div class="summary-label">Today unrealized P&amp;L</div><div class="summary-value {today_unrealized_class}">{today_unrealized_pnl:+,.4f}</div></div>
             <div class="summary-item"><div class="summary-label">Total realized P&amp;L</div><div class="summary-value {total_class}">{total_pnl:+,.4f}</div></div>
           </div>
           <div class="summary-tags">{tags}</div>
