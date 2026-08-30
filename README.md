@@ -246,6 +246,8 @@ The browser dashboard refreshes every five seconds and displays:
   change, trading range, USDT volume, and a short justification
 - A `TARGET` badge on watchlist candidates already included in the bot's target
   list
+- An **Add to targets** action for watchlist candidates not yet monitored; the
+  running bot loads the addition on its next cycle
 - Filled production buy and sell orders across all configured symbols
 - Completed-trade results grouped by symbol, including win rate and estimated P&L
 - Collapsible color-coded result cards per symbol, with green/red total P&L,

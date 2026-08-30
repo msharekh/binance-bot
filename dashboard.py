@@ -196,6 +196,21 @@ def write_config(
     temporary_file.replace(CONFIG_FILE)
 
 
+def add_target_symbol(symbol, status):
+    config = read_json(CONFIG_FILE, {})
+    symbols = list(
+        config.get("target_symbols") or status.get("target_symbols") or []
+    )
+    if symbol in symbols:
+        return False
+    config["target_symbols"] = [*symbols, symbol]
+    config["updated_at"] = int(datetime.now().timestamp())
+    temporary_file = CONFIG_FILE.with_suffix(".tmp")
+    temporary_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    temporary_file.replace(CONFIG_FILE)
+    return True
+
+
 def queue_sell_request(symbol, environment):
     request = {
         "command_id": uuid.uuid4().hex,
@@ -624,7 +639,10 @@ def render_position_progress(
 
 def render_market_suggestions(status):
     suggestions = status.get("suggestions", [])
-    target_symbols = set(status.get("target_symbols", []))
+    config = read_json(CONFIG_FILE, {})
+    target_symbols = set(
+        config.get("target_symbols") or status.get("target_symbols", [])
+    )
     with st.expander(
         f"Spot watchlist candidates ({len(suggestions)})", expanded=False
     ):
@@ -660,6 +678,18 @@ def render_market_suggestions(status):
                         """,
                         unsafe_allow_html=True,
                     )
+                    if suggestion["symbol"] not in target_symbols:
+                        if st.button(
+                            "Add to targets",
+                            key=f"watchlist_add_{suggestion['symbol']}",
+                            width="stretch",
+                        ):
+                            if add_target_symbol(suggestion["symbol"], status):
+                                st.toast(
+                                    f"{suggestion['symbol']} added; the bot will "
+                                    "check it on the next cycle."
+                                )
+                            st.rerun()
 
 
 def render_results_by_symbol(history):
