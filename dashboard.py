@@ -707,7 +707,7 @@ def render_results_by_symbol(history):
 
 
 def filter_history(history):
-    with st.expander("Transaction filters", expanded=True):
+    with st.popover("Filters"):
         symbols = sorted(history["Symbol"].dropna().unique().tolist())
         sides = sorted(history["Side"].dropna().unique().tolist())
         reasons = sorted(history["Reason"].dropna().unique().tolist())
@@ -1284,7 +1284,6 @@ def render_dashboard():
     render_results_by_symbol(history)
     render_market_suggestions(status)
 
-    st.subheader("Transaction history")
     if history.empty:
         st.info("No filled transactions have been recorded yet.")
         return
