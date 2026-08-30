@@ -911,7 +911,9 @@ def render_market_check_cards():
         )
         signal = str(market.get("signal", "CHECK PENDING"))
         display_signal = signal
-        if "SELL" in signal and symbol not in open_symbols:
+        if market_status == "WAITING FOR NEW CANDLE":
+            display_signal = "SIGNAL USED · WAITING NEXT CANDLE"
+        elif "SELL" in signal and symbol not in open_symbols:
             display_signal = "OVERBOUGHT · NO POSITION"
         has_buy_checks = any(name in market for name in buy_check_names)
         buy_check_label = (
@@ -943,6 +945,8 @@ def render_market_check_cards():
             )
         if "ERROR" in market_status:
             color_class = "market-check-error"
+        elif market_status == "WAITING FOR NEW CANDLE":
+            color_class = "market-check-monitoring"
         elif "BUY" in signal:
             color_class = "market-check-buy"
         elif "SELL" in signal and symbol in open_symbols:

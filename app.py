@@ -69,6 +69,7 @@ TESTNET = os.getenv("BINANCE_TESTNET", "false").lower() == "true"
 ENVIRONMENT = "testnet" if TESTNET else "production"
 TRADING_ENABLED = os.getenv("ENABLE_TRADING", "false").lower() == "true"
 STATE_FILE = Path(__file__).with_name("trade_state.json")
+ENTRY_COOLDOWN_FILE = Path(__file__).with_name("entry_cooldowns.json")
 TRANSACTION_FILE = Path(__file__).with_name("transactions.jsonl")
 STATUS_FILE = Path(__file__).with_name("bot_status.json")
 LIVE_PRICE_FILE = Path(__file__).with_name("live_prices.json")
@@ -261,6 +262,7 @@ def analyze_market(client, symbol, interval, strategy):
         data[column] = data[column].astype(float)
 
     completed = data.iloc[:-1]
+    signal_candle_close_time = int(completed["close_time"].iloc[-1])
     entry_price = completed["close"].iloc[-1]
     rsi_series = calculate_rsi(completed)
     previous_rsi = rsi_series.iloc[-2]
@@ -307,6 +309,7 @@ def analyze_market(client, symbol, interval, strategy):
     buy_signal = bool(rsi_recovered and near_support and trend_ok and reward_ok)
     return {
         "entry": entry_price,
+        "signal_candle_close_time": signal_candle_close_time,
         "sl": entry_price - stop_distance,
         "tp": entry_price + reward_distance,
         "rsi": rsi,
@@ -366,6 +369,34 @@ def save_positions(positions):
     temporary_file.replace(STATE_FILE)
 
 
+def load_entry_cooldowns():
+    if not ENTRY_COOLDOWN_FILE.exists():
+        return {}
+    try:
+        with ENTRY_COOLDOWN_FILE.open("r", encoding="utf-8") as cooldown_file:
+            state = json.load(cooldown_file)
+        if state.get("environment") != ENVIRONMENT:
+            return {}
+        return {
+            str(symbol): int(candle_time)
+            for symbol, candle_time in state.get("last_entry_candle", {}).items()
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+        print(f"Ignoring invalid entry_cooldowns.json: {error}")
+        return {}
+
+
+def save_entry_cooldowns(last_entry_candle):
+    temporary_file = ENTRY_COOLDOWN_FILE.with_suffix(".tmp")
+    state = {
+        "environment": ENVIRONMENT,
+        "last_entry_candle": last_entry_candle,
+    }
+    with temporary_file.open("w", encoding="utf-8") as cooldown_file:
+        json.dump(state, cooldown_file, indent=2)
+    temporary_file.replace(ENTRY_COOLDOWN_FILE)
+
+
 def save_status(
     available_usdt, total_portfolio_usdt, unpriced_assets, analyses,
     market_statuses, target_symbols, maximum_exposure, trade_amount,
@@ -407,6 +438,9 @@ def save_status(
         "markets": {
             symbol: {
                 "price": analysis["entry"],
+                "signal_candle_close_time": analysis[
+                    "signal_candle_close_time"
+                ],
                 "rsi": analysis["rsi"],
                 "atr": analysis["atr"],
                 "support": analysis["support"],
@@ -803,6 +837,9 @@ def buy(
             average_price
             + Decimal(str(analysis["tp"] - analysis["entry"]))
         ),
+        "signal_candle_close_time": int(
+            analysis["signal_candle_close_time"]
+        ),
         "opened_at": int(time.time()),
     }
     positions[symbol] = position
@@ -812,6 +849,9 @@ def buy(
             "side": "BUY", "symbol": symbol, "order_id": order["orderId"],
             "quantity": str(executed_quantity), "price": str(average_price),
             "quote_amount": str(quote_spent), "quote_asset": rules["quote_asset"],
+            "signal_candle_close_time": int(
+                analysis["signal_candle_close_time"]
+            ),
             "reason": "strategy buy signal",
         }
     )
@@ -944,7 +984,7 @@ def wait_for_next_cycle(client, positions, rules_by_symbol, active_symbols):
 
 def decide_and_trade(
     client, symbol, rules, analysis, positions, maximum_exposure, trade_amount,
-    max_open_positions, trading_on_hold,
+    max_open_positions, trading_on_hold, last_entry_candle,
 ):
     position = positions.get(symbol)
     price = Decimal(str(analysis["entry"]))
@@ -969,10 +1009,20 @@ def decide_and_trade(
         return "ON HOLD"
 
     if analysis["buy_signal"]:
+        signal_candle = int(analysis["signal_candle_close_time"])
+        if last_entry_candle.get(symbol) == signal_candle:
+            print(
+                f"{symbol} BUY skipped: this completed candle's signal was "
+                "already used."
+            )
+            return "WAITING FOR NEW CANDLE"
         position = buy(
             client, symbol, rules, analysis, positions, maximum_exposure,
             trade_amount, max_open_positions,
         )
+        if position:
+            last_entry_candle[symbol] = signal_candle
+            save_entry_cooldowns(last_entry_candle)
         return "BUY FILLED" if position else "BUY SKIPPED"
     else:
         print(f"{symbol} NO TRADE: waiting for a buy signal.")
@@ -1005,6 +1055,18 @@ def main():
     acquire_instance_lock()
     client = create_client()
     positions = load_positions()
+    last_entry_candle = load_entry_cooldowns()
+    cooldowns_recovered = False
+    for symbol, position in positions.items():
+        signal_candle = position.get("signal_candle_close_time")
+        if signal_candle is None:
+            continue
+        signal_candle = int(signal_candle)
+        if last_entry_candle.get(symbol) != signal_candle:
+            last_entry_candle[symbol] = signal_candle
+            cooldowns_recovered = True
+    if cooldowns_recovered:
+        save_entry_cooldowns(last_entry_candle)
     rules_by_symbol = {}
     suggestions = []
     market_overview = {}
@@ -1061,7 +1123,7 @@ def main():
                         market_statuses[symbol] = decide_and_trade(
                             client, symbol, rules_by_symbol[symbol], analysis, positions,
                             maximum_exposure, trade_amount, max_open_positions,
-                            trading_on_hold,
+                            trading_on_hold, last_entry_candle,
                         )
                     else:
                         print(f"{symbol}: trading disabled.")

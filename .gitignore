@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 trade_state.json
+entry_cooldowns.json
 transactions.jsonl
 bot_status.json
 live_prices.json

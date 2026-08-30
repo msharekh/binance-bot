@@ -16,6 +16,8 @@ place market orders on Binance Spot.
 - Monitors `BTCUSDT`, `ETHUSDT`, and `TRXUSDT` by default.
 - Tracks one independent open position per symbol in `trade_state.json`.
 - Limits the number of open positions and total USDT entry exposure.
+- Prevents a symbol from reusing the same completed-candle buy signal after an
+  exit; the cooldown survives bot restarts.
 - Records filled orders in `transactions.jsonl` and displays them in a local
   Streamlit dashboard.
 
@@ -357,6 +359,8 @@ The bot and dashboard have separate roles:
   sell request; only `app.py` holds credentials and submits the market order.
 - `trade_state.json` contains positions keyed by trading symbol and records the
   environment that created them.
+- `entry_cooldowns.json` remembers the last completed candle used for each
+  symbol so a fast exit cannot trigger another buy from the same signal.
 - `transactions.jsonl` contains the persistent filled-order history.
 - `bot_status.json` contains the latest available USDT and market prices used by
   the dashboard. It also contains the Binance-wide Spot portfolio estimate and
