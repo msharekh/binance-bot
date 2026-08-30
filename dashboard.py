@@ -74,6 +74,11 @@ st.markdown(
     .suggestion-target-tag {display:inline-block;margin-left:.4rem;padding:.1rem .35rem;
       border-radius:999px;background:#052e16;color:#bbf7d0;border:1px solid #16a34a;
       font-size:.65rem;font-weight:900;vertical-align:middle}
+    .target-review-card {padding:.75rem;border-radius:.65rem;background:#1c1917;
+      border:1px solid #f59e0b;min-height:9.5rem;margin-bottom:.35rem}
+    .target-review-symbol {color:#fde68a;font-size:1.05rem;font-weight:900}
+    .target-review-reason {color:#d6d3d1;font-size:.8rem;line-height:1.35;
+      margin:.2rem 0}
     .suggestion-stat {color:#e2e8f0;font-weight:650}
     .suggestion-note {color:#cbd5e1;font-size:.92rem;line-height:1.35}
     .result-card {padding:1rem;border-radius:.7rem;background:#0f172a;
@@ -280,6 +285,21 @@ def add_target_symbol(symbol, status):
     if symbol in symbols:
         return False
     config["target_symbols"] = [*symbols, symbol]
+    config["updated_at"] = int(datetime.now().timestamp())
+    temporary_file = CONFIG_FILE.with_suffix(".tmp")
+    temporary_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    temporary_file.replace(CONFIG_FILE)
+    return True
+
+
+def remove_target_symbol(symbol, status):
+    config = read_json(CONFIG_FILE, {})
+    symbols = list(
+        config.get("target_symbols") or status.get("target_symbols") or []
+    )
+    if symbol not in symbols:
+        return False
+    config["target_symbols"] = [item for item in symbols if item != symbol]
     config["updated_at"] = int(datetime.now().timestamp())
     temporary_file = CONFIG_FILE.with_suffix(".tmp")
     temporary_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
@@ -766,6 +786,82 @@ def render_market_suggestions(status):
                                     "check it on the next cycle."
                                 )
                             st.rerun()
+
+
+def render_targets_outside_watchlist(status, positions):
+    suggestions = status.get("suggestions", [])
+    if not suggestions:
+        return
+    config = read_json(CONFIG_FILE, {})
+    target_symbols = list(
+        config.get("target_symbols") or status.get("target_symbols") or []
+    )
+    suggestion_symbols = {
+        str(suggestion.get("symbol", "")) for suggestion in suggestions
+    }
+    outside_symbols = [
+        symbol for symbol in target_symbols if symbol not in suggestion_symbols
+    ]
+    with st.expander(
+        f"Targets outside current watchlist screen ({len(outside_symbols)})",
+        expanded=False,
+    ):
+        st.caption(
+            "Review only: these targets are absent from the current 24-hour "
+            "liquidity/range screen. This is not automatically a sell signal. "
+            "Removing a target prevents new entries after the bot's next cycle; "
+            "an existing position remains monitored until it closes."
+        )
+        if not outside_symbols:
+            st.success("Every configured target is in the current watchlist screen.")
+            return
+        markets = status.get("markets", {})
+        for start in range(0, len(outside_symbols), 3):
+            columns = st.columns(3)
+            for column, symbol in zip(columns, outside_symbols[start : start + 3]):
+                market = markets.get(symbol, {})
+                reasons = ["Outside current 24h volume/range screen"]
+                if market and not market.get("trend_ok", False):
+                    reasons.append("Below trend EMA")
+                if market and not market.get("reward_ok", False):
+                    reasons.append("Reward target not met")
+                if "SELL" in str(market.get("signal", "")):
+                    reasons.append("Currently overbought")
+                checks = sum(
+                    bool(market.get(name))
+                    for name in (
+                        "rsi_recovered", "near_support", "trend_ok", "reward_ok"
+                    )
+                )
+                position_note = (
+                    "Open position will remain monitored."
+                    if symbol in positions
+                    else "No open tracked position."
+                )
+                with column:
+                    st.markdown(
+                        f"""
+                        <div class="target-review-card">
+                          <div class="target-review-symbol">{html.escape(symbol)}</div>
+                          <div class="target-review-reason">Current buy checks: {checks}/4</div>
+                          <div class="target-review-reason">{html.escape(' · '.join(reasons))}</div>
+                          <div class="target-review-reason">{html.escape(position_note)}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    if st.button(
+                        "Remove target",
+                        key=f"watchlist_remove_{symbol}",
+                        type="secondary",
+                        width="stretch",
+                    ):
+                        if remove_target_symbol(symbol, status):
+                            st.toast(
+                                f"{symbol} removed; the bot will stop seeking new "
+                                "entries after its next configuration reload."
+                            )
+                        st.rerun()
 
 
 def render_results_by_symbol(history):
@@ -1395,6 +1491,7 @@ def render_dashboard():
                         )
     render_results_by_symbol(history)
     render_market_suggestions(status)
+    render_targets_outside_watchlist(status, positions)
 
     if history.empty:
         st.info("No filled transactions have been recorded yet.")

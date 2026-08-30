@@ -250,6 +250,9 @@ The browser dashboard refreshes every five seconds and displays:
   list
 - An **Add to targets** action for watchlist candidates not yet monitored; the
   running bot loads the addition on its next cycle
+- A separate review list for configured targets outside the current watchlist
+  screen, with current strategy warnings and a one-click remove action; open
+  positions remain monitored
 - Filled production buy and sell orders across all configured symbols
 - Completed-trade results grouped by symbol, including win rate and estimated P&L
 - Collapsible color-coded result cards per symbol, with green/red total P&L,
