@@ -70,6 +70,9 @@ st.markdown(
     .suggestion-card {padding:1rem;border-radius:.7rem;background:#0f172a;
       border:1px solid #334155;min-height:12rem}
     .suggestion-symbol {color:#67e8f9;font-size:1.25rem;font-weight:800}
+    .suggestion-target-tag {display:inline-block;margin-left:.4rem;padding:.1rem .35rem;
+      border-radius:999px;background:#052e16;color:#bbf7d0;border:1px solid #16a34a;
+      font-size:.65rem;font-weight:900;vertical-align:middle}
     .suggestion-stat {color:#e2e8f0;font-weight:650}
     .suggestion-note {color:#cbd5e1;font-size:.92rem;line-height:1.35}
     .result-card {padding:1rem;border-radius:.7rem;background:#0f172a;
@@ -621,6 +624,7 @@ def render_position_progress(
 
 def render_market_suggestions(status):
     suggestions = status.get("suggestions", [])
+    target_symbols = set(status.get("target_symbols", []))
     with st.expander(
         f"Spot watchlist candidates ({len(suggestions)})", expanded=False
     ):
@@ -637,11 +641,16 @@ def render_market_suggestions(status):
             for column, suggestion in zip(columns, suggestions[start : start + 3]):
                 with column:
                     symbol = html.escape(suggestion["symbol"])
+                    target_tag = (
+                        '<span class="suggestion-target-tag">TARGET</span>'
+                        if suggestion["symbol"] in target_symbols
+                        else ""
+                    )
                     analysis = html.escape(suggestion["analysis"])
                     st.markdown(
                         f"""
                         <div class="suggestion-card">
-                          <div class="suggestion-symbol">{symbol}</div>
+                          <div class="suggestion-symbol">{symbol}{target_tag}</div>
                           <div class="suggestion-stat">Price: {suggestion['price']:.8f}</div>
                           <div class="suggestion-stat">24h change: {suggestion['change_pct']:+.2f}%</div>
                           <div class="suggestion-stat">24h range: {suggestion['range_pct']:.2f}%</div>

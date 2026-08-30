@@ -244,6 +244,8 @@ The browser dashboard refreshes every five seconds and displays:
 - Up to 30 read-only Binance Spot watchlist candidates with a live candidate
   count, current price, 24-hour
   change, trading range, USDT volume, and a short justification
+- A `TARGET` badge on watchlist candidates already included in the bot's target
+  list
 - Filled production buy and sell orders across all configured symbols
 - Completed-trade results grouped by symbol, including win rate and estimated P&L
 - Collapsible color-coded result cards per symbol, with green/red total P&L,
