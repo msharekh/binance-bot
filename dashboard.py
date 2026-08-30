@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from advisor import (
     AdvisorError,
@@ -175,6 +176,81 @@ def read_transactions():
     except OSError:
         return []
     return transactions
+
+
+def play_action_sound(transaction, sound_kind=None):
+    if not st.session_state.get("action_sounds_enabled", True):
+        return
+    if sound_kind is None:
+        side = str(transaction.get("side", "")).upper()
+        if side == "BUY":
+            sound_kind = "buy"
+        else:
+            try:
+                pnl = float(transaction.get("estimated_pnl_usdt", 0) or 0)
+            except (TypeError, ValueError):
+                pnl = 0
+            sound_kind = "profit" if pnl > 0 else "loss" if pnl < 0 else "neutral"
+    sequences = {
+        "buy": [(523.25, 0.00, 0.13), (659.25, 0.14, 0.18)],
+        "profit": [
+            (659.25, 0.00, 0.11),
+            (783.99, 0.11, 0.11),
+            (1046.50, 0.22, 0.22),
+        ],
+        "loss": [(440.00, 0.00, 0.14), (329.63, 0.15, 0.22)],
+        "neutral": [(587.33, 0.00, 0.18)],
+    }
+    tones = sequences.get(sound_kind, sequences["neutral"])
+    components.html(
+        """
+        <script>
+        (() => {
+          const tones = %s;
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtx) return;
+          const context = new AudioCtx();
+          context.resume().then(() => {
+            const start = context.currentTime + 0.03;
+            tones.forEach(([frequency, delay, duration]) => {
+              const oscillator = context.createOscillator();
+              const gain = context.createGain();
+              oscillator.type = "sine";
+              oscillator.frequency.value = frequency;
+              gain.gain.setValueAtTime(0.0001, start + delay);
+              gain.gain.exponentialRampToValueAtTime(0.11, start + delay + 0.015);
+              gain.gain.exponentialRampToValueAtTime(
+                0.0001, start + delay + duration
+              );
+              oscillator.connect(gain);
+              gain.connect(context.destination);
+              oscillator.start(start + delay);
+              oscillator.stop(start + delay + duration + 0.02);
+            });
+            const end = Math.max(...tones.map(tone => tone[1] + tone[2]));
+            window.setTimeout(() => context.close(), (end + 0.15) * 1000);
+          }).catch(() => {});
+        })();
+        </script>
+        """ % json.dumps(tones),
+        height=0,
+        width=0,
+    )
+
+
+def notify_new_transaction(transactions):
+    if not transactions:
+        return
+    latest = transactions[-1]
+    transaction_key = "|".join(
+        str(latest.get(name, ""))
+        for name in ("recorded_at", "order_id", "side", "symbol")
+    )
+    previous_key = st.session_state.get("last_action_sound_transaction")
+    st.session_state["last_action_sound_transaction"] = transaction_key
+    if previous_key is None or previous_key == transaction_key:
+        return
+    play_action_sound(latest)
 
 
 def write_config(
@@ -1088,7 +1164,9 @@ def render_top_bar():
     if live_prices.get("environment") != status.get("environment"):
         live_prices = {}
     live_markets = live_prices.get("prices", {})
-    history = transaction_frame(read_transactions())
+    transactions = read_transactions()
+    notify_new_transaction(transactions)
+    history = transaction_frame(transactions)
     positions = state.get("positions", {})
     available = status.get("available_usdt")
     binance_portfolio = status.get("total_portfolio_usdt")
@@ -1365,3 +1443,28 @@ with st.sidebar:
     render_ai_advisor()
     st.header("Bot controls")
     render_settings_panel()
+    st.header("Alerts")
+    action_sounds_enabled = st.toggle(
+        "Action sounds", value=True, key="action_sounds_enabled"
+    )
+    demo_sound = st.selectbox(
+        "Sound demo",
+        ("Buy", "Profit", "Loss", "Break-even"),
+        disabled=not action_sounds_enabled,
+    )
+    if st.button(
+        "Play demo sound",
+        disabled=not action_sounds_enabled,
+        width="stretch",
+    ):
+        demo_sound_kinds = {
+            "Buy": "buy",
+            "Profit": "profit",
+            "Loss": "loss",
+            "Break-even": "neutral",
+        }
+        play_action_sound({}, sound_kind=demo_sound_kinds[demo_sound])
+    st.caption(
+        "Buy, profit, loss, and break-even actions use different tones. "
+        "If sounds are blocked, select the test button once to allow audio."
+    )

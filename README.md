@@ -257,6 +257,8 @@ The browser dashboard refreshes every five seconds and displays:
 - Transaction filters for symbol, side, reason, environment, and date range
 - Color-coded transaction rows and a clear `PROFIT`, `LOSS`, `BREAK EVEN`, or
   `ENTRY` result label
+- Distinct optional sounds for new buys, profitable sells, losing sells, and
+  break-even exits; previous actions are not replayed after a page refresh
 - Estimated realized profit or loss before commissions
 - A CSV download of the filtered transaction history
 
