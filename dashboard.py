@@ -120,6 +120,10 @@ st.markdown(
     .market-check-neutral {border-color:#eab308;background:linear-gradient(135deg,#422006,#0f172a)}
     .market-check-head {display:flex;justify-content:space-between;align-items:center;gap:.4rem}
     .market-check-symbol {color:#f8fafc;font-size:.96rem;font-weight:900;letter-spacing:.03em}
+    .market-check-symbol a {color:#f8fafc;text-decoration:none;
+      border-bottom:1px dashed #94a3b8}
+    .market-check-symbol a:hover {color:#7dd3fc;border-bottom-color:#38bdf8;
+      border-bottom-style:solid}
     .market-check-status {padding:.12rem .3rem;border-radius:999px;background:#020617;
       color:#e2e8f0;font-size:.62rem;font-weight:800;white-space:nowrap;
       max-width:56%;overflow:hidden;text-overflow:ellipsis}
@@ -307,6 +311,40 @@ def remove_target_symbol(symbol, status):
     return True
 
 
+def add_target_symbols(new_symbols, status):
+    config = read_json(CONFIG_FILE, {})
+    symbols = list(
+        config.get("target_symbols") or status.get("target_symbols") or []
+    )
+    symbols_to_add = [symbol for symbol in new_symbols if symbol not in symbols]
+    if not symbols_to_add:
+        return 0
+    config["target_symbols"] = [*symbols, *symbols_to_add]
+    config["updated_at"] = int(datetime.now().timestamp())
+    temporary_file = CONFIG_FILE.with_suffix(".tmp")
+    temporary_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    temporary_file.replace(CONFIG_FILE)
+    return len(symbols_to_add)
+
+
+def remove_target_symbols(symbols_to_remove, status):
+    config = read_json(CONFIG_FILE, {})
+    symbols = list(
+        config.get("target_symbols") or status.get("target_symbols") or []
+    )
+    removal_set = set(symbols_to_remove)
+    remaining_symbols = [symbol for symbol in symbols if symbol not in removal_set]
+    removed_count = len(symbols) - len(remaining_symbols)
+    if not removed_count:
+        return 0
+    config["target_symbols"] = remaining_symbols
+    config["updated_at"] = int(datetime.now().timestamp())
+    temporary_file = CONFIG_FILE.with_suffix(".tmp")
+    temporary_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    temporary_file.replace(CONFIG_FILE)
+    return removed_count
+
+
 def queue_sell_request(symbol, environment):
     request = {
         "command_id": uuid.uuid4().hex,
@@ -365,7 +403,7 @@ def render_settings_panel():
         if suggestion.get("symbol")
     ]
     symbol_options = list(dict.fromkeys(list(symbols) + suggested_symbols))
-    with st.expander("Trading controls", expanded=False):
+    with st.expander("⚙️ Trading controls", expanded=False):
         saved_notice = st.session_state.pop("trading_controls_notice", None)
         if saved_notice:
             st.success(saved_notice)
@@ -739,14 +777,35 @@ def render_market_suggestions(status):
     target_symbols = set(
         config.get("target_symbols") or status.get("target_symbols", [])
     )
+    selected_count = sum(
+        suggestion["symbol"] in target_symbols for suggestion in suggestions
+    )
     with st.expander(
-        f"Spot watchlist candidates ({len(suggestions)})", expanded=False
+        f"🟢 Coins to buy ({len(suggestions)}) · Selected: {selected_count}",
+        expanded=False,
     ):
         st.caption(
             "Read-only screen: stablecoins excluded; requires a 1.5% range "
             "and 10M USDT volume, then ranks by range. "
             "This is not a profit guarantee or a buy signal."
         )
+        candidate_symbols = [
+            suggestion["symbol"]
+            for suggestion in suggestions
+            if suggestion["symbol"] not in target_symbols
+        ]
+        if st.button(
+            "Add all",
+            key="watchlist_add_all",
+            type="primary",
+            disabled=not candidate_symbols,
+        ):
+            added_count = add_target_symbols(candidate_symbols, status)
+            st.toast(
+                f"{added_count} candidate{'s' if added_count != 1 else ''} added; "
+                "the bot will check them on the next cycle."
+            )
+            st.rerun()
         if not suggestions:
             st.info("Suggestions will appear after the bot refreshes Binance market data.")
             return
@@ -803,7 +862,7 @@ def render_targets_outside_watchlist(status, positions):
         symbol for symbol in target_symbols if symbol not in suggestion_symbols
     ]
     with st.expander(
-        f"Targets outside current watchlist screen ({len(outside_symbols)})",
+        f"🔴 Coins to avoid ({len(outside_symbols)})",
         expanded=False,
     ):
         st.caption(
@@ -812,6 +871,18 @@ def render_targets_outside_watchlist(status, positions):
             "Removing a target prevents new entries after the bot's next cycle; "
             "an existing position remains monitored until it closes."
         )
+        if st.button(
+            "Remove all",
+            key="watchlist_remove_all",
+            type="secondary",
+            disabled=not outside_symbols,
+        ):
+            removed_count = remove_target_symbols(outside_symbols, status)
+            st.toast(
+                f"{removed_count} target{'s' if removed_count != 1 else ''} removed; "
+                "the bot will stop seeking new entries after its next configuration reload."
+            )
+            st.rerun()
         if not outside_symbols:
             st.success("Every configured target is in the current watchlist screen.")
             return
@@ -865,7 +936,7 @@ def render_targets_outside_watchlist(status, positions):
 
 
 def render_results_by_symbol(history):
-    with st.expander("Results by symbol", expanded=False):
+    with st.expander("📊 Results by symbol", expanded=False):
         if history.empty:
             st.info("No completed trades are available for symbol results yet.")
             return
@@ -1068,6 +1139,10 @@ def render_market_check_cards():
     cards = []
     for symbol in ordered_symbols:
         market = markets.get(symbol, {})
+        tradingview_url = (
+            "https://www.tradingview.com/chart/?symbol="
+            + quote(f"BINANCE:{symbol}", safe="")
+        )
         live_market = live_markets.get(symbol, {})
         display_price = live_market.get("price", market.get("price"))
         direction = str(live_market.get("direction", "FLAT"))
@@ -1131,7 +1206,11 @@ def render_market_check_cards():
         cards.append(
             f'<div class="market-check-card {color_class} {flash_class}">'
             f'<div class="market-check-head">'
-            f'<span class="market-check-symbol">{html.escape(symbol)}</span>'
+            f'<span class="market-check-symbol"><a '
+            f'href="{html.escape(tradingview_url)}" target="_blank" '
+            f'rel="noopener noreferrer" '
+            f'title="Open {html.escape(symbol)} on TradingView">'
+            f'{html.escape(symbol)} &#8599;</a></span>'
             f'<span class="market-check-status" title="{html.escape(market_status)}">'
             f'{html.escape(market_status)}</span></div>'
             f'<div class="market-check-signal">'
@@ -1219,7 +1298,7 @@ def render_ai_advisor():
         f"{brief.get('model', 'unknown model')} | "
         f"{generated_at.strftime('%Y-%m-%d %H:%M:%S')} | {age_text} | read-only"
     )
-    with st.expander("Full AI analysis", expanded=False):
+    with st.expander("🤖 Full AI analysis", expanded=False):
         st.markdown(f"**{brief.get('headline', 'AI performance review')}**")
         st.markdown("**Progress**")
         st.write(brief.get("progress", "Not available."))
@@ -1436,7 +1515,7 @@ def render_top_bar():
         """,
         unsafe_allow_html=True,
     )
-    with st.expander("More account and performance metrics", expanded=False):
+    with st.expander("📈 More account and performance metrics", expanded=False):
         st.markdown(
             f"""
             <div class="secondary-summary-grid">
@@ -1516,7 +1595,7 @@ def render_dashboard():
         na_rep="—",
     )
     st.dataframe(styled_frame, hide_index=True, width="stretch")
-    with st.expander("Detailed transaction columns", expanded=False):
+    with st.expander("🧾 Detailed transaction columns", expanded=False):
         detailed_style = detail_frame.style.apply(
             style_transaction_row, axis=1
         ).format(
