@@ -32,6 +32,7 @@ DEFAULT_TREND_EMA_PERIOD = 50
 DEFAULT_MIN_NET_REWARD_PCT = Decimal("0.50")
 DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT = Decimal("0.20")
 DEFAULT_SELL_RSI_THRESHOLD = Decimal("65")
+DEFAULT_MAX_STOP_DISTANCE_PCT = Decimal("0.80")
 TRADE_AMOUNT_USDT = Decimal(os.getenv("TRADE_AMOUNT_USDT", "25"))
 DEFAULT_MAX_TOTAL_EXPOSURE_USDT = Decimal(
     os.getenv("MAX_TOTAL_EXPOSURE_USDT", "75")
@@ -126,6 +127,7 @@ def load_runtime_config():
         "min_net_reward_pct": DEFAULT_MIN_NET_REWARD_PCT,
         "estimated_round_trip_fee_pct": DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT,
         "atr_sl_multiplier": DEFAULT_ATR_SL_MULTIPLIER,
+        "max_stop_distance_pct": DEFAULT_MAX_STOP_DISTANCE_PCT,
         "risk_reward_ratio": DEFAULT_RISK_REWARD_RATIO,
         "sell_rsi_threshold": DEFAULT_SELL_RSI_THRESHOLD,
     }
@@ -178,6 +180,13 @@ def load_runtime_config():
         atr_sl_multiplier = Decimal(
             str(saved.get("atr_sl_multiplier", DEFAULT_ATR_SL_MULTIPLIER))
         )
+        max_stop_distance_pct = Decimal(
+            str(
+                saved.get(
+                    "max_stop_distance_pct", DEFAULT_MAX_STOP_DISTANCE_PCT
+                )
+            )
+        )
         risk_reward_ratio = Decimal(
             str(saved.get("risk_reward_ratio", DEFAULT_RISK_REWARD_RATIO))
         )
@@ -212,6 +221,8 @@ def load_runtime_config():
             raise ValueError("Estimated round-trip fee must be between 0% and 5%.")
         if not 0.1 <= atr_sl_multiplier <= 10:
             raise ValueError("ATR stop multiplier must be between 0.1 and 10.")
+        if not 0.1 <= max_stop_distance_pct <= 10:
+            raise ValueError("Maximum stop distance must be between 0.1% and 10%.")
         if not 0.1 <= risk_reward_ratio <= 10:
             raise ValueError("Reward/risk ratio must be between 0.1 and 10.")
         if not 50 <= sell_rsi_threshold <= 99:
@@ -229,6 +240,7 @@ def load_runtime_config():
         config["min_net_reward_pct"] = min_net_reward_pct
         config["estimated_round_trip_fee_pct"] = estimated_round_trip_fee_pct
         config["atr_sl_multiplier"] = atr_sl_multiplier
+        config["max_stop_distance_pct"] = max_stop_distance_pct
         config["risk_reward_ratio"] = risk_reward_ratio
         config["sell_rsi_threshold"] = sell_rsi_threshold
         return config
@@ -273,6 +285,7 @@ def analyze_market(client, symbol, interval, strategy):
     support = completed["low"].tail(20).min()
     resistance = completed["high"].tail(20).max()
     stop_distance = atr * float(strategy["atr_sl_multiplier"])
+    stop_distance_pct = stop_distance / entry_price * 100
     reward_distance = stop_distance * float(strategy["risk_reward_ratio"])
     gross_reward_pct = reward_distance / entry_price * 100
     expected_net_reward_pct = gross_reward_pct - float(
@@ -308,7 +321,16 @@ def analyze_market(client, symbol, interval, strategy):
     reward_ok = bool(
         expected_net_reward_pct >= float(strategy["min_net_reward_pct"])
     )
-    buy_signal = bool(rsi_recovered and near_support and trend_ok and reward_ok)
+    stop_risk_ok = bool(
+        stop_distance_pct <= float(strategy["max_stop_distance_pct"])
+    )
+    buy_signal = bool(
+        rsi_recovered
+        and near_support
+        and trend_ok
+        and reward_ok
+        and stop_risk_ok
+    )
     return {
         "entry": entry_price,
         "signal_candle_close_time": signal_candle_close_time,
@@ -326,10 +348,12 @@ def analyze_market(client, symbol, interval, strategy):
         "trend_ema": trend_ema,
         "gross_reward_pct": gross_reward_pct,
         "expected_net_reward_pct": expected_net_reward_pct,
+        "stop_distance_pct": stop_distance_pct,
         "rsi_recovered": rsi_recovered,
         "near_support": near_support,
         "trend_ok": trend_ok,
         "reward_ok": reward_ok,
+        "stop_risk_ok": stop_risk_ok,
         "buy_signal": buy_signal,
         "sell_signal": bool(rsi >= float(strategy["sell_rsi_threshold"])),
         "stop_distance": stop_distance,
@@ -434,6 +458,7 @@ def save_status(
                 strategy["estimated_round_trip_fee_pct"]
             ),
             "atr_sl_multiplier": str(strategy["atr_sl_multiplier"]),
+            "max_stop_distance_pct": str(strategy["max_stop_distance_pct"]),
             "risk_reward_ratio": str(strategy["risk_reward_ratio"]),
             "sell_rsi_threshold": str(strategy["sell_rsi_threshold"]),
         },
@@ -456,10 +481,12 @@ def save_status(
                 "trend_price": analysis["trend_price"],
                 "trend_ema": analysis["trend_ema"],
                 "expected_net_reward_pct": analysis["expected_net_reward_pct"],
+                "stop_distance_pct": analysis["stop_distance_pct"],
                 "rsi_recovered": analysis["rsi_recovered"],
                 "near_support": analysis["near_support"],
                 "trend_ok": analysis["trend_ok"],
                 "reward_ok": analysis["reward_ok"],
+                "stop_risk_ok": analysis["stop_risk_ok"],
                 "signal": market_signal(analysis),
                 "status": market_statuses.get(symbol, "UNKNOWN"),
             }
@@ -1188,12 +1215,14 @@ def print_report(symbol, analysis):
         f"RSI recovery: {'YES' if analysis['rsi_recovered'] else 'NO'} | "
         f"Near support: {'YES' if analysis['near_support'] else 'NO'} | "
         f"Trend: {'YES' if analysis['trend_ok'] else 'NO'} | "
-        f"Net reward: {'YES' if analysis['reward_ok'] else 'NO'}"
+        f"Net reward: {'YES' if analysis['reward_ok'] else 'NO'} | "
+        f"Stop risk: {'YES' if analysis['stop_risk_ok'] else 'NO'}"
     )
     print(
         f"Trend: {analysis['trend_interval']} EMA {analysis['trend_ema_period']} "
         f"= {analysis['trend_ema']:.8f} | "
-        f"Expected net reward: {analysis['expected_net_reward_pct']:.3f}%"
+        f"Expected net reward: {analysis['expected_net_reward_pct']:.3f}% | "
+        f"Stop distance: {analysis['stop_distance_pct']:.3f}%"
     )
     print("=" * 72)
 

@@ -221,10 +221,10 @@ The browser dashboard refreshes every five seconds and displays:
   expandable section
 - Color-coded market-check cards that flash after each new bot cycle and show
   price, RSI, ATR, support, resistance, signal, suggested SL/TP, and bot status
-- A four-item checklist on every market card that highlights passed buy checks
+- A five-item checklist on every market card that highlights passed buy checks
   in green and remaining checks in red
 - Readiness-sorted market cards in a responsive grid, with views for all
-  targets, the six closest setups, markets passing three or four checks, and
+  targets, the six closest setups, markets passing four or five checks, and
   open positions
 - A compact primary summary with bot-health freshness and secondary account and
   performance metrics available on demand
@@ -338,7 +338,7 @@ percentage points; it is positive when the inverse thresholds are met. A
 non-quiet market becomes broadly positive or weak at a median change of +/-1%
 or directional breadth of at least 60%; all other cases are mixed. This status
 describes current breadth and volatility—it does not predict future prices or
-bypass the four entry confirmations.
+bypass the five entry confirmations.
 
 Each 15-minute breadth result is appended to `market_overview_history.jsonl`.
 After 7–14 days, these observations can be used to replace provisional fixed
