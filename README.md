@@ -380,6 +380,8 @@ The bot and dashboard have separate roles:
   later threshold calibration.
 - `sell_requests.jsonl` is a short-lived local queue for confirmed dashboard
   market-sell requests.
+- `buy_requests.jsonl` is a short-lived local queue for confirmed dashboard
+  market-buy requests.
 - `advisor.py` builds sanitized performance metrics and requests the structured
   Version 2 analysis without access to Binance credentials or order execution.
 - `ai_brief.json` is the local cache for the latest AI analysis.

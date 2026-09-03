@@ -12,5 +12,7 @@ market_overview_history.jsonl
 bot_config.json
 sell_requests.jsonl
 sell_requests.processing.jsonl
+buy_requests.jsonl
+buy_requests.processing.jsonl
 bot.lock
 .env

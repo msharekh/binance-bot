@@ -4,7 +4,7 @@ import msvcrt
 import os
 import statistics
 import time
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from pathlib import Path
 
 import pandas as pd
@@ -79,6 +79,8 @@ MARKET_OVERVIEW_HISTORY_FILE = Path(__file__).with_name(
 )
 SELL_REQUEST_FILE = Path(__file__).with_name("sell_requests.jsonl")
 SELL_PROCESSING_FILE = Path(__file__).with_name("sell_requests.processing.jsonl")
+BUY_REQUEST_FILE = Path(__file__).with_name("buy_requests.jsonl")
+BUY_PROCESSING_FILE = Path(__file__).with_name("buy_requests.processing.jsonl")
 LOCK_FILE = Path(__file__).with_name("bot.lock")
 INSTANCE_LOCK_HANDLE = None
 
@@ -493,6 +495,7 @@ def refresh_live_prices(client, symbols):
         return
 
     prices = {}
+    refreshed_at = int(time.time())
     for symbol in symbols:
         price = ticker_prices.get(symbol)
         if price is None:
@@ -511,17 +514,30 @@ def refresh_live_prices(client, symbols):
             if previous_price
             else Decimal("0")
         )
+        previous_market = previous.get(symbol, {})
+        progress_price = Decimal(
+            str(previous_market.get("progress_price", price))
+        )
+        last_progress_at = int(
+            previous_market.get("last_progress_at", refreshed_at)
+        )
+        # Only a 0.1% new high counts as meaningful upward progress.
+        if price >= progress_price * Decimal("1.001"):
+            progress_price = price
+            last_progress_at = refreshed_at
         prices[symbol] = {
             "price": str(price),
             "previous_price": str(previous_price),
             "direction": direction,
             "change_pct": str(change_pct),
+            "progress_price": str(progress_price),
+            "last_progress_at": last_progress_at,
         }
 
     temporary_file = LIVE_PRICE_FILE.with_suffix(".tmp")
     payload = {
         "environment": ENVIRONMENT,
-        "updated_at": int(time.time()),
+        "updated_at": refreshed_at,
         "prices": prices,
     }
     try:
@@ -797,7 +813,7 @@ def current_exposure(positions):
 
 def buy(
     client, symbol, rules, analysis, positions, maximum_exposure, trade_amount,
-    max_open_positions,
+    max_open_positions, reason="strategy buy signal",
 ):
     if symbol in positions:
         return None
@@ -852,7 +868,7 @@ def buy(
             "signal_candle_close_time": int(
                 analysis["signal_candle_close_time"]
             ),
-            "reason": "strategy buy signal",
+            "reason": reason,
         }
     )
     print(
@@ -971,7 +987,94 @@ def process_sell_requests(client, positions, rules_by_symbol):
             print(f"{symbol} manual SELL error: {error}")
 
 
-def wait_for_next_cycle(client, positions, rules_by_symbol, active_symbols):
+def load_claimed_buy_requests():
+    if not BUY_PROCESSING_FILE.exists() and BUY_REQUEST_FILE.exists():
+        try:
+            BUY_REQUEST_FILE.replace(BUY_PROCESSING_FILE)
+        except OSError:
+            return []
+    if not BUY_PROCESSING_FILE.exists():
+        return []
+    requests = []
+    try:
+        for line in BUY_PROCESSING_FILE.read_text(encoding="utf-8").splitlines():
+            try:
+                requests.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        return []
+    return requests
+
+
+def save_remaining_buy_requests(requests):
+    if not requests:
+        if BUY_PROCESSING_FILE.exists():
+            BUY_PROCESSING_FILE.unlink()
+        return
+    temporary_file = BUY_PROCESSING_FILE.with_suffix(".tmp")
+    temporary_file.write_text(
+        "".join(json.dumps(request) + "\n" for request in requests),
+        encoding="utf-8",
+    )
+    temporary_file.replace(BUY_PROCESSING_FILE)
+
+
+def process_buy_requests(client, positions, rules_by_symbol, runtime_config):
+    requests = load_claimed_buy_requests()
+    while requests:
+        request = requests.pop(0)
+        # Remove before placing an order so a crash cannot replay a real-money buy.
+        save_remaining_buy_requests(requests)
+        symbol = str(request.get("symbol", "")).upper()
+        if request.get("action") != "BUY_MARKET":
+            print(f"{symbol} manual BUY rejected: unknown action.")
+            continue
+        if time.time() - int(request.get("created_at", 0)) > 30:
+            print(f"{symbol} manual BUY rejected: request expired.")
+            continue
+        if request.get("environment") != ENVIRONMENT:
+            print(f"{symbol} manual BUY rejected: environment mismatch.")
+            continue
+        if runtime_config["trading_on_hold"]:
+            print(f"{symbol} manual BUY rejected: new buys are on hold.")
+            continue
+        if symbol not in runtime_config["target_symbols"]:
+            print(f"{symbol} manual BUY rejected: symbol is not a target.")
+            continue
+        if symbol in positions:
+            print(f"{symbol} manual BUY skipped: position already exists.")
+            continue
+        try:
+            requested_amount = Decimal(str(request.get("amount_usdt", "20")))
+        except InvalidOperation:
+            print(f"{symbol} manual BUY rejected: invalid USDT amount.")
+            continue
+        if not requested_amount.is_finite() or requested_amount <= 0:
+            print(f"{symbol} manual BUY rejected: USDT amount must be positive.")
+            continue
+        try:
+            if symbol not in rules_by_symbol:
+                rules_by_symbol[symbol] = get_market_rules(client, symbol)
+            analysis = analyze_market(
+                client, symbol, runtime_config["interval"], runtime_config
+            )
+            buy(
+                client, symbol, rules_by_symbol[symbol], analysis, positions,
+                runtime_config["max_total_exposure_usdt"],
+                requested_amount,
+                runtime_config["max_open_positions"],
+                "dashboard manual buy",
+            )
+        except (BinanceAPIException, BinanceOrderException) as error:
+            print(f"{symbol} manual BUY Binance error: {error}")
+        except Exception as error:
+            print(f"{symbol} manual BUY error: {error}")
+
+
+def wait_for_next_cycle(
+    client, positions, rules_by_symbol, active_symbols, runtime_config,
+):
     elapsed = 0
     while elapsed < POLL_SECONDS:
         time.sleep(min(2, POLL_SECONDS - elapsed))
@@ -980,6 +1083,9 @@ def wait_for_next_cycle(client, positions, rules_by_symbol, active_symbols):
             refresh_live_prices(client, active_symbols)
         if TRADING_ENABLED:
             process_sell_requests(client, positions, rules_by_symbol)
+            process_buy_requests(
+                client, positions, rules_by_symbol, runtime_config
+            )
 
 
 def decide_and_trade(
@@ -1084,6 +1190,10 @@ def main():
             max_open_positions = runtime_config["max_open_positions"]
             trading_on_hold = runtime_config["trading_on_hold"]
             interval = runtime_config["interval"]
+            if TRADING_ENABLED:
+                process_buy_requests(
+                    client, positions, rules_by_symbol, runtime_config
+                )
             # An open position is always monitored even if removed from targets.
             active_symbols = list(
                 dict.fromkeys(target_symbols + list(positions.keys()))
@@ -1147,7 +1257,10 @@ def main():
                 )
             except (BinanceAPIException, BinanceOrderException) as error:
                 print(f"Could not update account status: {error}")
-            wait_for_next_cycle(client, positions, rules_by_symbol, active_symbols)
+            wait_for_next_cycle(
+                client, positions, rules_by_symbol, active_symbols,
+                runtime_config,
+            )
         except KeyboardInterrupt:
             print("\nStopped.")
             break

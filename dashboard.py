@@ -30,6 +30,7 @@ STATUS_FILE = PROJECT_DIR / "bot_status.json"
 LIVE_PRICE_FILE = PROJECT_DIR / "live_prices.json"
 CONFIG_FILE = PROJECT_DIR / "bot_config.json"
 SELL_REQUEST_FILE = PROJECT_DIR / "sell_requests.jsonl"
+BUY_REQUEST_FILE = PROJECT_DIR / "buy_requests.jsonl"
 INTERVAL_OPTIONS = [
     "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h",
     "12h", "1d", "3d", "1w", "1M",
@@ -97,6 +98,20 @@ st.markdown(
     .position-stat {padding:.3rem .4rem;border-radius:.35rem;background:#0f172a}
     .position-label {color:#94a3b8;font-size:.67rem;text-transform:uppercase;font-weight:700}
     .position-value {color:#e2e8f0;font-size:.83rem;font-weight:750}
+    .position-progress-wrap {margin:.55rem 0 .2rem}
+    .position-progress-track {position:relative;height:1.15rem;border-radius:999px;
+      border:1px solid #64748b;box-shadow:inset 0 1px 3px rgba(0,0,0,.45)}
+    .position-progress-marker {position:absolute;top:-.28rem;width:.28rem;height:1.7rem;
+      border-radius:999px;background:#f8fafc;border:1px solid #020617;
+      box-shadow:0 0 7px rgba(255,255,255,.9);transform:translateX(-50%)}
+    .position-entry-marker {position:absolute;top:0;width:2px;height:100%;
+      background:rgba(255,255,255,.55);transform:translateX(-50%)}
+    .position-progress-unfilled {position:absolute;top:0;right:0;height:100%;
+      background:#020617;border-radius:0 999px 999px 0}
+    .position-progress-labels {display:flex;justify-content:space-between;gap:.5rem;
+      margin-top:.18rem;color:#cbd5e1;font-size:.68rem;font-weight:750}
+    .position-progress-state {text-align:center;color:#e2e8f0;font-size:.72rem;
+      font-weight:850;margin-top:.08rem}
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
       margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
@@ -354,6 +369,19 @@ def queue_sell_request(symbol, environment):
         "created_at": int(datetime.now().timestamp()),
     }
     with SELL_REQUEST_FILE.open("a", encoding="utf-8") as request_file:
+        request_file.write(json.dumps(request) + "\n")
+
+
+def queue_buy_request(symbol, environment, amount_usdt):
+    request = {
+        "command_id": uuid.uuid4().hex,
+        "action": "BUY_MARKET",
+        "symbol": symbol,
+        "amount_usdt": str(amount_usdt),
+        "environment": environment,
+        "created_at": int(datetime.now().timestamp()),
+    }
+    with BUY_REQUEST_FILE.open("a", encoding="utf-8") as request_file:
         request_file.write(json.dumps(request) + "\n")
 
 
@@ -691,7 +719,8 @@ def transaction_frame(transactions):
 
 
 def render_position_progress(
-    symbol, position, current_price, trading_enabled, environment
+    symbol, position, current_price, trading_enabled, environment,
+    live_market=None,
 ):
     tradingview_url = (
         "https://www.tradingview.com/chart/?symbol="
@@ -711,6 +740,22 @@ def render_position_progress(
     stop_loss_value = quantity * stop_loss
     unrealized_pnl = (current - entry) * quantity
     unrealized_pct = ((current - entry) / entry) * 100 if entry else 0
+    live_market = live_market or {}
+    last_progress_at = live_market.get("last_progress_at")
+    interval_minutes = INTERVAL_MINUTES.get(
+        read_json(CONFIG_FILE, {}).get("interval", "5m"), 5
+    )
+    stall_text = "🟢 Tracking progress"
+    if last_progress_at:
+        stalled_minutes = max(
+            0, int((datetime.now().timestamp() - float(last_progress_at)) / 60)
+        )
+        if stalled_minutes >= interval_minutes * 6:
+            stall_text = f"🔴 Stalled {stalled_minutes}m"
+        elif stalled_minutes >= interval_minutes * 3:
+            stall_text = f"🟡 Slow {stalled_minutes}m"
+        else:
+            stall_text = f"🟢 Progress {stalled_minutes}m ago"
     pnl_style = "pnl-positive" if unrealized_pnl >= 0 else "pnl-negative"
     if current >= entry:
         distance_label = "To TP"
@@ -753,22 +798,35 @@ def render_position_progress(
             if confirmed:
                 queue_sell_request(symbol, environment)
                 st.success("Sell request queued. It expires in 30 seconds.")
-    st.progress(
-        progress,
-        text=f"SL {stop_loss:.8f}  ←  Entry {entry:.8f}  →  TP {take_profit:.8f}",
-    )
+    progress_pct = progress * 100
+    entry_pct = ((entry - stop_loss) / span * 100) if span > 0 else 50
     st.markdown(
         f"""
-        <div class="position-stats">
-          <div class="position-stat"><div class="position-label">Entry / Spent</div><div class="position-value">Price {entry:.8f}<br>{entry_value:,.4f} USDT</div></div>
-          <div class="position-stat"><div class="position-label">Current / Value</div><div class="position-value">Price {current:.8f}<br>{current_value:,.4f} USDT</div></div>
-          <div class="position-stat"><div class="position-label">Take Profit / Est. Value</div><div class="position-value">Price {take_profit:.8f}<br>{take_profit_value:,.4f} USDT</div></div>
-          <div class="position-stat"><div class="position-label">Stop Loss / Est. Value</div><div class="position-value">Price {stop_loss:.8f}<br>{stop_loss_value:,.4f} USDT</div></div>
+        <div class="position-progress-wrap">
+          <div class="position-progress-track" style="background:linear-gradient(90deg,#b91c1c 0%,#f59e0b {entry_pct:.2f}%,#16a34a 100%)">
+            <span class="position-progress-unfilled" style="width:{100 - progress_pct:.2f}%"></span>
+            <span class="position-entry-marker" style="left:{entry_pct:.2f}%" title="Entry"></span>
+            <span class="position-progress-marker" style="left:{progress_pct:.2f}%" title="Current price"></span>
+          </div>
+          <div class="position-progress-labels"><span>SL {stop_loss:.8f}</span><span>Entry {entry:.8f}</span><span>TP {take_profit:.8f}</span></div>
+          <div class="position-progress-state">{html.escape(stall_text)}</div>
         </div>
-        <div class="position-quantity">Gross estimates before fees &middot; {distance_label}: {distance:.2f}%</div>
         """,
         unsafe_allow_html=True,
     )
+    with st.expander("Position details", expanded=False):
+        st.markdown(
+            f"""
+            <div class="position-stats">
+              <div class="position-stat"><div class="position-label">Entry / Spent</div><div class="position-value">Price {entry:.8f}<br>{entry_value:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Current / Value</div><div class="position-value">Price {current:.8f}<br>{current_value:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Take Profit / Est. Value</div><div class="position-value">Price {take_profit:.8f}<br>{take_profit_value:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Stop Loss / Est. Value</div><div class="position-value">Price {stop_loss:.8f}<br>{stop_loss_value:,.4f} USDT</div></div>
+            </div>
+            <div class="position-quantity">Gross estimates before fees &middot; {distance_label}: {distance:.2f}%</div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_market_suggestions(status):
@@ -1056,6 +1114,7 @@ def format_market_number(value, decimals=8):
 def render_market_check_cards():
     state = read_state()
     status = read_json(STATUS_FILE, {})
+    config = read_json(CONFIG_FILE, {})
     live_prices = read_json(LIVE_PRICE_FILE, {})
     if live_prices.get("environment") != status.get("environment"):
         live_prices = {}
@@ -1063,6 +1122,12 @@ def render_market_check_cards():
     markets = status.get("markets", {})
     target_symbols = status.get("target_symbols", [])
     open_symbols = set(state.get("positions", {}))
+    allowed_support_distance = format_market_number(
+        config.get("max_support_distance_pct", 0.5), 2
+    )
+    buy_rsi_threshold = float(config.get("buy_rsi_recovery", 40))
+    min_reward_threshold = float(config.get("min_net_reward_pct", 0.6))
+    sell_rsi_threshold = float(config.get("sell_rsi_threshold", 65))
     buy_check_names = ("rsi_recovered", "near_support", "trend_ok", "reward_ok")
     updated_at = status.get("updated_at")
     visual_updated_at = live_prices.get("updated_at") or updated_at
@@ -1115,7 +1180,11 @@ def render_market_check_cards():
     )
     market_view = st.radio(
         "Market card view",
-        ("All targets", "Closest to buy", "3–4 checks", "Open positions"),
+        (
+            "All targets", "Closest to buy", "3–4 checks",
+            "Open positions", "None",
+        ),
+        index=4,
         horizontal=True,
         label_visibility="collapsed",
         key="market_card_view",
@@ -1126,15 +1195,18 @@ def render_market_check_cards():
         ][:6]
     elif market_view == "3–4 checks":
         ordered_symbols = [
-            symbol for symbol in ordered_symbols if readiness_score(symbol) >= 3
+            symbol
+            for symbol in ordered_symbols
+            if symbol not in open_symbols and readiness_score(symbol) >= 3
         ]
     elif market_view == "Open positions":
         ordered_symbols = [
             symbol for symbol in ordered_symbols if symbol in open_symbols
         ]
-    if not ordered_symbols:
+    elif market_view == "None":
+        ordered_symbols = []
+    if not ordered_symbols and market_view != "None":
         st.info(f"No markets match the {market_view.lower()} view.")
-        return
 
     cards = []
     for symbol in ordered_symbols:
@@ -1152,6 +1224,24 @@ def render_market_check_cards():
         direction_class = {
             "UP": "live-up", "DOWN": "live-down", "FLAT": "live-flat"
         }.get(direction, "live-flat")
+        rsi_value = market.get("rsi")
+        previous_rsi = market.get("previous_rsi")
+        try:
+            rsi_change = float(rsi_value) - float(previous_rsi)
+        except (TypeError, ValueError):
+            rsi_change = 0
+        if rsi_change > 0:
+            rsi_direction_icon = "&#9650;"
+            rsi_direction_class = "live-up"
+        elif rsi_change < 0:
+            rsi_direction_icon = "&#9660;"
+            rsi_direction_class = "live-down"
+        else:
+            rsi_direction_icon = "&#8226;"
+            rsi_direction_class = "live-flat"
+        previous_rsi_title = (
+            f"Previous RSI: {format_market_number(previous_rsi, 2)}"
+        )
         market_status = str(
             market.get("status")
             or status.get("market_statuses", {}).get(symbol, "CHECK PENDING")
@@ -1162,14 +1252,52 @@ def render_market_check_cards():
             display_signal = "SIGNAL USED · WAITING NEXT CANDLE"
         elif "SELL" in signal and symbol not in open_symbols:
             display_signal = "OVERBOUGHT · NO POSITION"
+        is_open_position = symbol in open_symbols
         has_buy_checks = any(name in market for name in buy_check_names)
         buy_check_label = (
             f" · {sum(bool(market.get(name)) for name in buy_check_names)}/4 CHECKS"
-            if has_buy_checks
+            if has_buy_checks and not is_open_position
             else ""
         )
         buy_check_html = ""
-        if has_buy_checks:
+        if is_open_position:
+            position = state.get("positions", {}).get(symbol, {})
+            try:
+                current_price = float(display_price)
+                entry_price = float(position["entry"])
+                stop_price = float(position["stop_loss"])
+                take_profit_price = float(position["take_profit"])
+                take_profit_progress = (
+                    (current_price - entry_price) / (take_profit_price - entry_price)
+                    if take_profit_price > entry_price else 0
+                )
+                stop_loss_progress = (
+                    (entry_price - current_price) / (entry_price - stop_price)
+                    if entry_price > stop_price else 0
+                )
+                rsi_exit_progress = float(rsi_value) / sell_rsi_threshold
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                take_profit_progress = stop_loss_progress = rsi_exit_progress = 0
+            exit_items = []
+            for label, progress, hue in (
+                ("Take profit", take_profit_progress, 135),
+                ("Stop loss", stop_loss_progress, 0),
+                ("RSI exit", rsi_exit_progress, 30),
+            ):
+                progress = max(0.0, min(progress, 1.0))
+                saturation = round(35 + 55 * progress)
+                lightness = round(12 + 20 * progress)
+                exit_items.append(
+                    f'<div class="buy-check" title="{html.escape(label)}: '
+                    f'{progress * 100:.0f}% close" '
+                    f'style="color:#f8fafc;background:hsl({hue} {saturation}% '
+                    f'{lightness}%);border-color:hsl({hue} 85% 50%)">'
+                    f'&#9679; {html.escape(label)}</div>'
+                )
+            buy_check_html = (
+                f'<div class="buy-check-list">{"".join(exit_items)}</div>'
+            )
+        elif has_buy_checks:
             check_labels = (
                 ("rsi_recovered", "RSI recovery"),
                 ("near_support", "Near support"),
@@ -1182,8 +1310,42 @@ def render_market_check_cards():
                 check_class = "buy-check-pass" if passed else "buy-check-wait"
                 check_icon = "&#10003;" if passed else "&#10007;"
                 check_state = "PASSED" if passed else "REMAINING"
+                proximity = 0.0
+                if not passed:
+                    try:
+                        if check_name == "rsi_recovered":
+                            current_rsi = float(market.get("rsi"))
+                            prior_rsi = float(market.get("previous_rsi"))
+                            if current_rsi <= buy_rsi_threshold:
+                                proximity = current_rsi / buy_rsi_threshold
+                            elif prior_rsi > buy_rsi_threshold:
+                                proximity = 1 - min(
+                                    (current_rsi - buy_rsi_threshold) / 20, 1
+                                )
+                        elif check_name == "near_support":
+                            distance = float(market.get("distance_to_support_pct"))
+                            proximity = float(allowed_support_distance) / distance
+                        elif check_name == "trend_ok":
+                            trend_price = float(market.get("trend_price"))
+                            trend_ema = float(market.get("trend_ema"))
+                            gap = max(0, (trend_ema - trend_price) / trend_ema * 100)
+                            proximity = 1 - min(gap / 2, 1)
+                        elif check_name == "reward_ok":
+                            reward = float(market.get("expected_net_reward_pct"))
+                            proximity = reward / min_reward_threshold
+                    except (TypeError, ValueError, ZeroDivisionError):
+                        proximity = 0.0
+                proximity = max(0.0, min(proximity, 0.95))
+                wait_style = ""
+                if not passed:
+                    hue = round(45 * proximity)
+                    lightness = round(20 + 12 * proximity)
+                    wait_style = (
+                        f' style="background:hsl({hue} 82% {lightness}%);'
+                        f'border-color:hsl({hue} 90% 55%)"'
+                    )
                 check_items.append(
-                    f'<div class="buy-check {check_class}" '
+                    f'<div class="buy-check {check_class}"{wait_style} '
                     f'title="{html.escape(check_label)}: {check_state}">'
                     f'{check_icon} {html.escape(check_label)}</div>'
                 )
@@ -1203,6 +1365,104 @@ def render_market_check_cards():
         else:
             color_class = "market-check-neutral"
         flash_class = "market-check-flash" if should_flash else ""
+        if is_open_position:
+            position = state.get("positions", {}).get(symbol, {})
+            try:
+                level_current_price = float(display_price)
+                level_take_profit = float(position["take_profit"])
+                level_stop_loss = float(position["stop_loss"])
+                take_profit_remaining = max(
+                    (level_take_profit - level_current_price)
+                    / level_current_price * 100,
+                    0,
+                )
+                stop_loss_remaining = max(
+                    (level_current_price - level_stop_loss)
+                    / level_current_price * 100,
+                    0,
+                )
+                rsi_remaining = max(sell_rsi_threshold - float(rsi_value), 0)
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                take_profit_remaining = stop_loss_remaining = rsi_remaining = None
+            levels_html = (
+                f'<details class="market-check-levels"><summary>🟢 Take profit</summary>'
+                f'<div class="market-check-grid">'
+                f'<div class="market-check-stat">Entry price<span>'
+                f'{format_market_number(position.get("entry"))}</span></div>'
+                f'<div class="market-check-stat">Current price<span>'
+                f'{format_market_number(display_price)}</span></div>'
+                f'<div class="market-check-stat">Sell at<span>'
+                f'{format_market_number(position.get("take_profit"))}</span></div>'
+                f'<div class="market-check-stat">Remaining<span>'
+                f'{format_market_number(take_profit_remaining, 2)}%</span></div>'
+                f'</div></details>'
+                f'<details class="market-check-levels"><summary>🔴 Stop loss</summary>'
+                f'<div class="market-check-grid">'
+                f'<div class="market-check-stat">Entry price<span>'
+                f'{format_market_number(position.get("entry"))}</span></div>'
+                f'<div class="market-check-stat">Current price<span>'
+                f'{format_market_number(display_price)}</span></div>'
+                f'<div class="market-check-stat">Sell at<span>'
+                f'{format_market_number(position.get("stop_loss"))}</span></div>'
+                f'<div class="market-check-stat">Buffer remaining<span>'
+                f'{format_market_number(stop_loss_remaining, 2)}%</span></div>'
+                f'</div></details>'
+                f'<details class="market-check-levels"><summary>🟠 RSI exit</summary>'
+                f'<div class="market-check-grid">'
+                f'<div class="market-check-stat">Current RSI<span>'
+                f'{format_market_number(rsi_value, 2)}</span></div>'
+                f'<div class="market-check-stat">Sell at<span>'
+                f'&ge; {sell_rsi_threshold:g}</span></div>'
+                f'<div class="market-check-stat">Remaining<span>'
+                f'{format_market_number(rsi_remaining, 2)} points</span></div>'
+                f'</div></details>'
+            )
+        else:
+            levels_html = (
+                f'<details class="market-check-levels"><summary>🟠 RSI recovery</summary>'
+                f'<div class="market-check-grid">'
+                f'<div class="market-check-stat">Previous RSI<span>'
+                f'{format_market_number(market.get("previous_rsi"), 2)}</span></div>'
+                f'<div class="market-check-stat">Current RSI<span>'
+                f'{format_market_number(market.get("rsi"), 2)}</span></div>'
+                f'<div class="market-check-stat">Recovery level<span>'
+                f'Cross above {buy_rsi_threshold:g}</span></div>'
+                f'</div></details>'
+                f'<details class="market-check-levels"><summary>🟡 Near support</summary>'
+                f'<div class="market-check-grid">'
+                f'<div class="market-check-stat">Current price<span>'
+                f'{format_market_number(display_price)}</span></div>'
+                f'<div class="market-check-stat">Support<span>'
+                f'{format_market_number(market.get("support"))}</span></div>'
+                f'<div class="market-check-stat">Distance<span>'
+                f'{format_market_number(market.get("distance_to_support_pct"), 2)}%'
+                f'</span></div>'
+                f'<div class="market-check-stat">Allowed<span>'
+                f'&le; {allowed_support_distance}%</span></div>'
+                f'</div></details>'
+                f'<details class="market-check-levels"><summary>🔵 Trend</summary>'
+                f'<div class="market-check-grid">'
+                f'<div class="market-check-stat">Trend price<span>'
+                f'{format_market_number(market.get("trend_price"))}</span></div>'
+                f'<div class="market-check-stat">Trend EMA<span>'
+                f'{format_market_number(market.get("trend_ema"))}</span></div>'
+                f'<div class="market-check-stat">Timeframe<span>'
+                f'{html.escape(str(market.get("trend_interval", "N/A")))}</span></div>'
+                f'<div class="market-check-stat">Required<span>Price above EMA</span></div>'
+                f'</div></details>'
+                f'<details class="market-check-levels"><summary>🟣 Reward</summary>'
+                f'<div class="market-check-grid">'
+                f'<div class="market-check-stat">Suggested SL<span>'
+                f'{format_market_number(market.get("suggested_sl"))}</span></div>'
+                f'<div class="market-check-stat">Suggested TP<span>'
+                f'{format_market_number(market.get("suggested_tp"))}</span></div>'
+                f'<div class="market-check-stat">Net reward<span>'
+                f'{format_market_number(market.get("expected_net_reward_pct"), 3)}%'
+                f'</span></div>'
+                f'<div class="market-check-stat">Required<span>'
+                f'&ge; {min_reward_threshold:g}%</span></div>'
+                f'</div></details>'
+            )
         cards.append(
             f'<div class="market-check-card {color_class} {flash_class}">'
             f'<div class="market-check-head">'
@@ -1220,31 +1480,61 @@ def render_market_check_cards():
             f'<div class="market-check-stat">Price'
             f'<span class="{direction_class}">{direction_icon} '
             f'{format_market_number(display_price)}</span></div>'
-            f'<div class="market-check-stat">RSI<span>'
-            f'{format_market_number(market.get("rsi"), 2)}</span></div></div>'
-            f'<details class="market-check-levels"><summary>Levels</summary>'
-            f'<div class="market-check-grid">'
-            f'<div class="market-check-stat">ATR<span>'
-            f'{format_market_number(market.get("atr"))}</span></div>'
-            f'<div class="market-check-stat">Support<span>'
-            f'{format_market_number(market.get("support"))}</span></div>'
-            f'<div class="market-check-stat">Resistance<span>'
-            f'{format_market_number(market.get("resistance"))}</span></div>'
-            f'<div class="market-check-stat">Suggested SL<span>'
-            f'{format_market_number(market.get("suggested_sl"))}</span></div>'
-            f'<div class="market-check-stat">Suggested TP<span>'
-            f'{format_market_number(market.get("suggested_tp"))}</span></div>'
-            f'<div class="market-check-stat">Trend EMA<span>'
-            f'{format_market_number(market.get("trend_ema"))}</span></div>'
-            f'<div class="market-check-stat">Net TP reward<span>'
-            f'{format_market_number(market.get("expected_net_reward_pct"), 3)}%'
-            f'</span></div>'
-            f'</div></details></div>'
+            f'<div class="market-check-stat">RSI<span '
+            f'class="{rsi_direction_class}" '
+            f'title="{html.escape(previous_rsi_title)}">{rsi_direction_icon} '
+            f'{format_market_number(rsi_value, 2)}</span></div></div>'
+            f'{levels_html}</div>'
         )
     st.markdown(
         f'<div class="market-check-row">{"".join(cards)}</div>',
         unsafe_allow_html=True,
     )
+    buyable_symbols = [
+        symbol for symbol in target_symbols if symbol not in open_symbols
+    ]
+    with st.expander("🛒 Manual buy", expanded=False):
+        st.warning(
+            "A manual buy bypasses all four automatic entry checks and submits "
+            "a real market order. The execution price may differ from the displayed price."
+        )
+        selected_symbol = st.selectbox(
+            "Coin",
+            buyable_symbols,
+            key="manual_buy_symbol",
+            disabled=not buyable_symbols,
+        )
+        manual_buy_amount = st.number_input(
+            "Buy amount (USDT)",
+            min_value=1.0,
+            value=20.0,
+            step=1.0,
+            key="manual_buy_amount",
+            disabled=not buyable_symbols,
+        )
+        trading_enabled = bool(status.get("trading_enabled", False))
+        trading_on_hold = bool(
+            config.get("trading_on_hold", status.get("trading_on_hold", False))
+        )
+        if not trading_enabled:
+            st.caption("Trading is disabled, so manual buying is unavailable.")
+        elif trading_on_hold:
+            st.caption("New buys are on hold, so manual buying is unavailable.")
+        if st.button(
+            "Confirm market buy",
+            key="confirm_manual_buy",
+            type="primary",
+            disabled=(
+                not buyable_symbols or not trading_enabled or trading_on_hold
+            ),
+        ):
+            queue_buy_request(
+                selected_symbol, status.get("environment"), manual_buy_amount
+            )
+            st.success(
+                f"{manual_buy_amount:.2f} USDT buy request queued. "
+                "It expires in 30 seconds."
+            )
 
 
 @st.fragment(run_every=60)
@@ -1551,23 +1841,18 @@ def render_dashboard():
     history = transaction_frame(read_transactions())
 
     if positions:
-        st.subheader("Position exit progress")
-        position_items = list(positions.items())
-        for start in range(0, len(position_items), 2):
-            columns = st.columns(2, gap="small")
-            for column, (symbol, position) in zip(
-                columns, position_items[start : start + 2]
-            ):
-                with column:
-                    with st.container(border=True):
-                        market = status.get("markets", {}).get(symbol, {})
-                        live_market = live_markets.get(symbol, {})
-                        render_position_progress(
-                            symbol, position,
-                            live_market.get("price", market.get("price")),
-                            bool(status.get("trading_enabled", False)),
-                            status.get("environment", state["environment"]),
-                        )
+        st.subheader("📈 Open trades")
+        for symbol, position in positions.items():
+            with st.container(border=True):
+                market = status.get("markets", {}).get(symbol, {})
+                live_market = live_markets.get(symbol, {})
+                render_position_progress(
+                    symbol, position,
+                    live_market.get("price", market.get("price")),
+                    bool(status.get("trading_enabled", False)),
+                    status.get("environment", state["environment"]),
+                    live_market,
+                )
     render_results_by_symbol(history)
     render_market_suggestions(status)
     render_targets_outside_watchlist(status, positions)
