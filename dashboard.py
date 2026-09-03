@@ -98,16 +98,20 @@ st.markdown(
     .position-stat {padding:.3rem .4rem;border-radius:.35rem;background:#0f172a}
     .position-label {color:#94a3b8;font-size:.67rem;text-transform:uppercase;font-weight:700}
     .position-value {color:#e2e8f0;font-size:.83rem;font-weight:750}
-    .position-progress-wrap {margin:.55rem 0 .2rem}
-    .position-progress-track {position:relative;height:1.15rem;border-radius:999px;
+    .position-progress-wrap {margin:1.85rem 0 .2rem}
+    .position-progress-track {position:relative;height:2.3rem;border-radius:.08rem;
       border:1px solid #64748b;box-shadow:inset 0 1px 3px rgba(0,0,0,.45)}
-    .position-progress-marker {position:absolute;top:-.28rem;width:.28rem;height:1.7rem;
+    .position-progress-marker {position:absolute;top:-.28rem;width:.35rem;height:2.85rem;
       border-radius:999px;background:#f8fafc;border:1px solid #020617;
       box-shadow:0 0 7px rgba(255,255,255,.9);transform:translateX(-50%)}
+    .position-current-label {position:absolute;top:-1.65rem;transform:translateX(-50%);
+      padding:.15rem .38rem;border-radius:.25rem;color:#fff;border:1px solid #f8fafc;
+      box-shadow:0 2px 6px rgba(0,0,0,.55);font-size:.7rem;font-weight:900;
+      white-space:nowrap;z-index:2}
     .position-entry-marker {position:absolute;top:0;width:2px;height:100%;
       background:rgba(255,255,255,.55);transform:translateX(-50%)}
     .position-progress-unfilled {position:absolute;top:0;right:0;height:100%;
-      background:#020617;border-radius:0 999px 999px 0}
+      background:#020617;border-radius:0 .06rem .06rem 0}
     .position-progress-labels {display:flex;justify-content:space-between;gap:.5rem;
       margin-top:.18rem;color:#cbd5e1;font-size:.68rem;font-weight:750}
     .position-progress-state {text-align:center;color:#e2e8f0;font-size:.72rem;
@@ -139,6 +143,13 @@ st.markdown(
       border-bottom:1px dashed #94a3b8}
     .market-check-symbol a:hover {color:#7dd3fc;border-bottom-color:#38bdf8;
       border-bottom-style:solid}
+    .market-rank-tag {display:inline-block;margin-left:.3rem;padding:.05rem .3rem;
+      border-radius:999px;background:#1e293b;color:#f8fafc;border:1px solid #64748b;
+      font-size:.62rem;font-weight:900;vertical-align:middle}
+    .market-buy-link {display:inline-block;margin-left:.25rem;padding:.04rem .28rem;
+      border-radius:.3rem;background:#052e16;color:#bbf7d0!important;
+      border:1px solid #16a34a!important;text-decoration:none!important;
+      font-size:.7rem;vertical-align:middle}
     .market-check-status {padding:.12rem .3rem;border-radius:999px;background:#020617;
       color:#e2e8f0;font-size:.62rem;font-weight:800;white-space:nowrap;
       max-width:56%;overflow:hidden;text-overflow:ellipsis}
@@ -365,6 +376,19 @@ def queue_sell_request(symbol, environment):
         "command_id": uuid.uuid4().hex,
         "action": "SELL_MARKET",
         "symbol": symbol,
+        "environment": environment,
+        "created_at": int(datetime.now().timestamp()),
+    }
+    with SELL_REQUEST_FILE.open("a", encoding="utf-8") as request_file:
+        request_file.write(json.dumps(request) + "\n")
+
+
+def queue_sell_price_request(symbol, environment, sell_price):
+    request = {
+        "command_id": uuid.uuid4().hex,
+        "action": "SET_SELL_PRICE",
+        "symbol": symbol,
+        "sell_price": str(sell_price),
         "environment": environment,
         "created_at": int(datetime.now().timestamp()),
     }
@@ -715,6 +739,12 @@ def transaction_frame(transactions):
     history["Est. P&L (USDT)"] = pd.to_numeric(
         history["Est. P&L (USDT)"], errors="coerce"
     )
+    history["Value"] = pd.to_numeric(history["Value"], errors="coerce")
+    config = read_json(CONFIG_FILE, {})
+    one_way_fee_pct = float(
+        config.get("estimated_round_trip_fee_pct", 0.2)
+    ) / 2
+    history["Est. Fee (USDT)"] = history["Value"] * one_way_fee_pct / 100
     return history
 
 
@@ -740,10 +770,19 @@ def render_position_progress(
     stop_loss_value = quantity * stop_loss
     unrealized_pnl = (current - entry) * quantity
     unrealized_pct = ((current - entry) / entry) * 100 if entry else 0
+    runtime_config = read_json(CONFIG_FILE, {})
+    one_way_fee_pct = float(
+        runtime_config.get("estimated_round_trip_fee_pct", 0.2)
+    ) / 2
+    estimated_buy_fee = entry_value * one_way_fee_pct / 100
+    estimated_sell_fee = current_value * one_way_fee_pct / 100
+    estimated_net_pnl = (
+        unrealized_pnl - estimated_buy_fee - estimated_sell_fee
+    )
     live_market = live_market or {}
     last_progress_at = live_market.get("last_progress_at")
     interval_minutes = INTERVAL_MINUTES.get(
-        read_json(CONFIG_FILE, {}).get("interval", "5m"), 5
+        runtime_config.get("interval", "5m"), 5
     )
     stall_text = "🟢 Tracking progress"
     if last_progress_at:
@@ -798,8 +837,41 @@ def render_position_progress(
             if confirmed:
                 queue_sell_request(symbol, environment)
                 st.success("Sell request queued. It expires in 30 seconds.")
+            st.divider()
+            sell_price = st.number_input(
+                "Sell at price",
+                min_value=0.00000001,
+                value=float(take_profit),
+                format="%.8f",
+                key=f"manual_sell_price_{symbol}",
+                disabled=not trading_enabled,
+                help=(
+                    "Bot-managed trigger, not a Binance limit order. "
+                    "The bot must remain running."
+                ),
+            )
+            if st.button(
+                "Set sell price",
+                key=f"set_sell_price_{symbol}",
+                disabled=not trading_enabled,
+                width="stretch",
+            ):
+                queue_sell_price_request(symbol, environment, sell_price)
+                st.success(
+                    f"Sell price update to {sell_price:.8f} queued."
+                )
     progress_pct = progress * 100
     entry_pct = ((entry - stop_loss) / span * 100) if span > 0 else 50
+    label_pct = max(8, min(progress_pct, 92))
+    if progress_pct <= entry_pct and entry_pct > 0:
+        current_hue = round(38 * progress_pct / entry_pct)
+    elif entry_pct < 100:
+        current_hue = round(
+            38 + 97 * (progress_pct - entry_pct) / (100 - entry_pct)
+        )
+    else:
+        current_hue = 38
+    current_hue = max(0, min(current_hue, 135))
     st.markdown(
         f"""
         <div class="position-progress-wrap">
@@ -807,6 +879,7 @@ def render_position_progress(
             <span class="position-progress-unfilled" style="width:{100 - progress_pct:.2f}%"></span>
             <span class="position-entry-marker" style="left:{entry_pct:.2f}%" title="Entry"></span>
             <span class="position-progress-marker" style="left:{progress_pct:.2f}%" title="Current price"></span>
+            <span class="position-current-label" style="left:{label_pct:.2f}%;background:hsl({current_hue} 80% 32%)">{current:.8f}</span>
           </div>
           <div class="position-progress-labels"><span>SL {stop_loss:.8f}</span><span>Entry {entry:.8f}</span><span>TP {take_profit:.8f}</span></div>
           <div class="position-progress-state">{html.escape(stall_text)}</div>
@@ -822,6 +895,9 @@ def render_position_progress(
               <div class="position-stat"><div class="position-label">Current / Value</div><div class="position-value">Price {current:.8f}<br>{current_value:,.4f} USDT</div></div>
               <div class="position-stat"><div class="position-label">Take Profit / Est. Value</div><div class="position-value">Price {take_profit:.8f}<br>{take_profit_value:,.4f} USDT</div></div>
               <div class="position-stat"><div class="position-label">Stop Loss / Est. Value</div><div class="position-value">Price {stop_loss:.8f}<br>{stop_loss_value:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Est. Buy Fee ({one_way_fee_pct:.3f}%)</div><div class="position-value">{estimated_buy_fee:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Est. Sell Fee ({one_way_fee_pct:.3f}%)</div><div class="position-value">{estimated_sell_fee:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Est. Net P&amp;L</div><div class="position-value">{estimated_net_pnl:+,.4f} USDT</div></div>
             </div>
             <div class="position-quantity">Gross estimates before fees &middot; {distance_label}: {distance:.2f}%</div>
             """,
@@ -1170,6 +1246,44 @@ def render_market_check_cards():
         market = markets.get(symbol, {})
         return sum(bool(market.get(name)) for name in buy_check_names)
 
+    def buy_proximity_score(symbol):
+        market = markets.get(symbol, {})
+        scores = []
+        for check_name in buy_check_names:
+            if market.get(check_name):
+                scores.append(1.0)
+                continue
+            try:
+                if check_name == "rsi_recovered":
+                    current_rsi = float(market["rsi"])
+                    previous_rsi = float(market["previous_rsi"])
+                    if current_rsi <= buy_rsi_threshold:
+                        score = current_rsi / buy_rsi_threshold
+                    elif previous_rsi > buy_rsi_threshold:
+                        score = 1 - min(
+                            (current_rsi - buy_rsi_threshold) / 20, 1
+                        )
+                    else:
+                        score = 0
+                elif check_name == "near_support":
+                    score = float(allowed_support_distance) / float(
+                        market["distance_to_support_pct"]
+                    )
+                elif check_name == "trend_ok":
+                    trend_price = float(market["trend_price"])
+                    trend_ema = float(market["trend_ema"])
+                    gap = max(0, (trend_ema - trend_price) / trend_ema * 100)
+                    score = 1 - min(gap / 2, 1)
+                else:
+                    score = (
+                        float(market["expected_net_reward_pct"])
+                        / min_reward_threshold
+                    )
+            except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                score = 0
+            scores.append(max(0.0, min(score, 0.99)))
+        return sum(scores)
+
     ordered_symbols = sorted(
         target_symbols,
         key=lambda symbol: (
@@ -1190,9 +1304,18 @@ def render_market_check_cards():
         key="market_card_view",
     )
     if market_view == "Closest to buy":
-        ordered_symbols = [
-            symbol for symbol in ordered_symbols if symbol not in open_symbols
-        ][:6]
+        ordered_symbols = sorted(
+            (
+                symbol
+                for symbol in ordered_symbols
+                if symbol not in open_symbols
+            ),
+            key=lambda symbol: (
+                -readiness_score(symbol),
+                -buy_proximity_score(symbol),
+                symbol,
+            ),
+        )[:6]
     elif market_view == "3–4 checks":
         ordered_symbols = [
             symbol
@@ -1207,10 +1330,27 @@ def render_market_check_cards():
         ordered_symbols = []
     if not ordered_symbols and market_view != "None":
         st.info(f"No markets match the {market_view.lower()} view.")
+    rank_by_symbol = (
+        {symbol: rank for rank, symbol in enumerate(ordered_symbols, 1)}
+        if market_view == "Closest to buy"
+        else {}
+    )
 
     cards = []
     for symbol in ordered_symbols:
         market = markets.get(symbol, {})
+        rank_tag = (
+            f'<span class="market-rank-tag">#{rank_by_symbol[symbol]}</span>'
+            if symbol in rank_by_symbol
+            else ""
+        )
+        manual_buy_link = (
+            f'<a class="market-buy-link" href="?manual_buy={quote(symbol)}#manual-buy" '
+            f'target="_self" title="Select {html.escape(symbol)} for manual buy">'
+            f'&#128722;</a>'
+            if symbol not in open_symbols
+            else ""
+        )
         tradingview_url = (
             "https://www.tradingview.com/chart/?symbol="
             + quote(f"BINANCE:{symbol}", safe="")
@@ -1470,7 +1610,7 @@ def render_market_check_cards():
             f'href="{html.escape(tradingview_url)}" target="_blank" '
             f'rel="noopener noreferrer" '
             f'title="Open {html.escape(symbol)} on TradingView">'
-            f'{html.escape(symbol)} &#8599;</a></span>'
+            f'{html.escape(symbol)} &#8599;</a>{rank_tag}{manual_buy_link}</span>'
             f'<span class="market-check-status" title="{html.escape(market_status)}">'
             f'{html.escape(market_status)}</span></div>'
             f'<div class="market-check-signal">'
@@ -1493,10 +1633,20 @@ def render_market_check_cards():
     buyable_symbols = [
         symbol for symbol in target_symbols if symbol not in open_symbols
     ]
-    with st.expander("🛒 Manual buy", expanded=False):
+    requested_buy_symbol = str(st.query_params.get("manual_buy", "")).upper()
+    valid_buy_request = requested_buy_symbol in buyable_symbols
+    if (
+        valid_buy_request
+        and st.session_state.get("manual_buy_query_symbol")
+        != requested_buy_symbol
+    ):
+        st.session_state["manual_buy_symbol"] = requested_buy_symbol
+        st.session_state["manual_buy_query_symbol"] = requested_buy_symbol
+    st.markdown('<div id="manual-buy"></div>', unsafe_allow_html=True)
+    with st.expander("🛒 Manual buy", expanded=valid_buy_request):
         st.warning(
-            "A manual buy bypasses all four automatic entry checks and submits "
-            "a real market order. The execution price may differ from the displayed price."
+            "Manual buy skips entry checks and places a real market order. "
+            "Final price may vary."
         )
         selected_symbol = st.selectbox(
             "Coin",
@@ -1504,13 +1654,35 @@ def render_market_check_cards():
             key="manual_buy_symbol",
             disabled=not buyable_symbols,
         )
+        try:
+            available_usdt = float(status.get("available_usdt"))
+            max_open_positions = int(
+                config.get(
+                    "max_open_positions",
+                    status.get("max_open_positions", 1),
+                )
+            )
+            suggested_buy_amount = max(
+                1.0, round(available_usdt / max_open_positions, 2)
+            )
+        except (TypeError, ValueError, ZeroDivisionError):
+            suggested_buy_amount = 20.0
+        previous_suggestion = st.session_state.get(
+            "manual_buy_suggested_amount"
+        )
+        if (
+            "manual_buy_amount" not in st.session_state
+            or st.session_state["manual_buy_amount"] == previous_suggestion
+        ):
+            st.session_state["manual_buy_amount"] = suggested_buy_amount
+        st.session_state["manual_buy_suggested_amount"] = suggested_buy_amount
         manual_buy_amount = st.number_input(
             "Buy amount (USDT)",
             min_value=1.0,
-            value=20.0,
             step=1.0,
             key="manual_buy_amount",
             disabled=not buyable_symbols,
+            help="Default is available USDT divided by maximum open positions.",
         )
         trading_enabled = bool(status.get("trading_enabled", False))
         trading_on_hold = bool(
@@ -1842,17 +2014,23 @@ def render_dashboard():
 
     if positions:
         st.subheader("📈 Open trades")
-        for symbol, position in positions.items():
-            with st.container(border=True):
-                market = status.get("markets", {}).get(symbol, {})
-                live_market = live_markets.get(symbol, {})
-                render_position_progress(
-                    symbol, position,
-                    live_market.get("price", market.get("price")),
-                    bool(status.get("trading_enabled", False)),
-                    status.get("environment", state["environment"]),
-                    live_market,
-                )
+        position_items = list(positions.items())
+        for start in range(0, len(position_items), 2):
+            columns = st.columns(2, gap="small")
+            for column, (symbol, position) in zip(
+                columns, position_items[start : start + 2]
+            ):
+                with column:
+                    with st.container(border=True):
+                        market = status.get("markets", {}).get(symbol, {})
+                        live_market = live_markets.get(symbol, {})
+                        render_position_progress(
+                            symbol, position,
+                            live_market.get("price", market.get("price")),
+                            bool(status.get("trading_enabled", False)),
+                            status.get("environment", state["environment"]),
+                            live_market,
+                        )
     render_results_by_symbol(history)
     render_market_suggestions(status)
     render_targets_outside_watchlist(status, positions)
@@ -1863,10 +2041,12 @@ def render_dashboard():
     filtered = filter_history(history).sort_values("Time", ascending=False)
     detail_columns = [
         "Time", "Environment", "Side", "Result", "Symbol", "Quantity", "Price",
-        "Value", "Quote asset", "Est. P&L (USDT)", "Reason", "Order ID",
+        "Value", "Est. Fee (USDT)", "Quote asset", "Est. P&L (USDT)",
+        "Reason", "Order ID",
     ]
     compact_columns = [
-        "Time", "Symbol", "Side", "Result", "Value", "Est. P&L (USDT)", "Reason",
+        "Time", "Symbol", "Side", "Result", "Value", "Est. Fee (USDT)",
+        "Est. P&L (USDT)", "Reason",
     ]
     filtered = filtered.copy()
     filtered["Result"] = filtered.apply(transaction_result, axis=1)
@@ -1876,7 +2056,10 @@ def render_dashboard():
     detail_frame = filtered[detail_columns]
     compact_frame = filtered[compact_columns]
     styled_frame = compact_frame.style.apply(style_transaction_row, axis=1).format(
-        {"Est. P&L (USDT)": lambda value: f"{value:+,.4f}"},
+        {
+            "Est. Fee (USDT)": lambda value: f"{value:,.4f}",
+            "Est. P&L (USDT)": lambda value: f"{value:+,.4f}",
+        },
         na_rep="—",
     )
     st.dataframe(styled_frame, hide_index=True, width="stretch")
@@ -1884,7 +2067,10 @@ def render_dashboard():
         detailed_style = detail_frame.style.apply(
             style_transaction_row, axis=1
         ).format(
-            {"Est. P&L (USDT)": lambda value: f"{value:+,.4f}"},
+            {
+                "Est. Fee (USDT)": lambda value: f"{value:,.4f}",
+                "Est. P&L (USDT)": lambda value: f"{value:+,.4f}",
+            },
             na_rep="—",
         )
         st.dataframe(detailed_style, hide_index=True, width="stretch")

@@ -466,9 +466,28 @@ def save_status(
             for symbol, analysis in analyses.items()
         },
     }
-    with temporary_file.open("w", encoding="utf-8") as status_file:
-        json.dump(status, status_file, indent=2)
-    temporary_file.replace(STATUS_FILE)
+    try:
+        with temporary_file.open("w", encoding="utf-8") as status_file:
+            json.dump(status, status_file, indent=2)
+    except OSError as error:
+        print(f"Could not write bot-status update: {error}")
+        return
+
+    for attempt in range(6):
+        try:
+            temporary_file.replace(STATUS_FILE)
+            return
+        except PermissionError as error:
+            if attempt == 5:
+                print(
+                    "Bot-status file remained locked; skipping this update "
+                    f"and trying again next cycle: {error}"
+                )
+                return
+            time.sleep(0.05 * (attempt + 1))
+        except OSError as error:
+            print(f"Could not publish bot-status update: {error}")
+            return
 
 
 def refresh_live_prices(client, symbols):
@@ -959,7 +978,8 @@ def process_sell_requests(client, positions, rules_by_symbol):
         # but it cannot replay a real-money sell after restart.
         save_remaining_sell_requests(requests)
         symbol = str(request.get("symbol", "")).upper()
-        if request.get("action") != "SELL_MARKET":
+        action = request.get("action")
+        if action not in {"SELL_MARKET", "SET_SELL_PRICE"}:
             print(f"{symbol} manual SELL rejected: unknown action.")
             continue
         if time.time() - int(request.get("created_at", 0)) > 30:
@@ -971,6 +991,27 @@ def process_sell_requests(client, positions, rules_by_symbol):
         position = positions.get(symbol)
         if not position:
             print(f"{symbol} manual SELL skipped: no tracked open position.")
+            continue
+        if action == "SET_SELL_PRICE":
+            try:
+                sell_price = Decimal(str(request.get("sell_price")))
+            except InvalidOperation:
+                print(f"{symbol} sell-price update rejected: invalid price.")
+                continue
+            if not sell_price.is_finite() or sell_price <= 0:
+                print(f"{symbol} sell-price update rejected: price must be positive.")
+                continue
+            if sell_price <= Decimal(position["entry"]):
+                print(
+                    f"{symbol} sell-price update rejected: target must be "
+                    "above the entry price. Use Sell now for an immediate exit."
+                )
+                continue
+            position["take_profit"] = str(sell_price)
+            save_positions(positions)
+            print(
+                f"{symbol} bot-managed sell price updated to {sell_price}."
+            )
             continue
         try:
             if symbol not in rules_by_symbol:
