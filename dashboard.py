@@ -116,11 +116,11 @@ st.markdown(
       margin-top:.18rem;color:#cbd5e1;font-size:.68rem;font-weight:750}
     .position-progress-state {text-align:center;color:#e2e8f0;font-size:.72rem;
       font-weight:850;margin-top:.08rem}
-    .position-candle-wrap {margin:.55rem 0 .15rem}
+    .position-candle-wrap {margin:.4rem 0 .1rem}
     .position-candle-title {display:flex;justify-content:space-between;gap:.5rem;
-      color:#cbd5e1;font-size:.7rem;font-weight:800;margin-bottom:.18rem}
-    .position-candle-chart {display:block;width:100%;height:auto;background:#020617;
-      border:1px solid #334155;border-radius:.2rem}
+      color:#94a3b8;font-size:.66rem;font-weight:700;margin-bottom:.14rem}
+    .position-candle-chart {display:block;width:100%;height:auto;background:#0b1220;
+      border:1px solid #1e293b;border-radius:.12rem}
     .position-candle-empty {padding:.55rem;color:#94a3b8;background:#020617;
       border:1px solid #334155;border-radius:.2rem;font-size:.72rem}
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
@@ -814,7 +814,7 @@ def position_candlestick_chart(
     candles, current, entry, break_even, stop_loss, take_profit, interval,
 ):
     parsed = []
-    for candle in (candles or [])[-12:]:
+    for candle in (candles or [])[-48:]:
         try:
             parsed.append(
                 {
@@ -833,8 +833,8 @@ def position_candlestick_chart(
             'the bot completes its next market check.</div>'
         )
 
-    width, height = 720, 230
-    left, right, top, bottom = 14, 108, 12, 27
+    width, height = 720, 190
+    left, right, top, bottom = 14, 104, 9, 23
     plot_width = width - left - right
     plot_height = height - top - bottom
     levels = [stop_loss, entry, break_even, current, take_profit]
@@ -850,25 +850,26 @@ def position_candlestick_chart(
         return top + (chart_high - price) / (chart_high - chart_low) * plot_height
 
     step = plot_width / len(parsed)
-    candle_width = max(7, min(20, step * 0.48))
+    candle_width = max(5, min(11, step * 0.44))
     chart_parts = [
         f'<svg class="position-candle-chart" viewBox="0 0 {width} {height}" '
         f'role="img" aria-label="{html.escape(str(interval))} candlestick chart '
         f'with stop loss, entry, break-even, current price, and take profit">',
         f'<rect x="{left}" y="{top}" width="{plot_width}" height="{plot_height}" '
-        'fill="#020617"/>',
+        'fill="#0b1220"/>',
     ]
     for grid_index in range(1, 4):
         grid_y = top + plot_height * grid_index / 4
         chart_parts.append(
             f'<line x1="{left}" x2="{left + plot_width}" y1="{grid_y:.2f}" '
-            f'y2="{grid_y:.2f}" stroke="#1e293b" stroke-width="1"/>'
+            f'y2="{grid_y:.2f}" stroke="#334155" stroke-width="0.7" '
+            'opacity="0.25"/>'
         )
 
     for index, candle in enumerate(parsed):
         candle_x = left + step * index + step / 2
         rising = candle["close"] >= candle["open"]
-        color = "#4ade80" if rising else "#f87171"
+        color = "#34d399" if rising else "#fb7185"
         high_y = y_position(candle["high"])
         low_y = y_position(candle["low"])
         body_top = y_position(max(candle["open"], candle["close"]))
@@ -883,19 +884,20 @@ def position_candlestick_chart(
                 f'<g><title>{html.escape(candle_tip)}</title>',
                 f'<line x1="{candle_x:.2f}" x2="{candle_x:.2f}" '
                 f'y1="{high_y:.2f}" y2="{low_y:.2f}" stroke="{color}" '
-                'stroke-width="2"/>',
+                'stroke-width="1.4" opacity="0.5"/>',
                 f'<rect x="{candle_x - candle_width / 2:.2f}" '
                 f'y="{body_top:.2f}" width="{candle_width:.2f}" '
-                f'height="{body_height:.2f}" fill="{color}"/></g>',
+                f'height="{body_height:.2f}" fill="{color}" '
+                'opacity="0.5"/></g>',
             ]
         )
 
     level_specs = [
-        ("TP", take_profit, "#4ade80", ""),
-        ("Now", current, "#fbbf24", "3 3"),
-        ("BE", break_even, "#f59e0b", "6 4"),
-        ("Entry", entry, "#60a5fa", "6 4"),
-        ("SL", stop_loss, "#f87171", ""),
+        ("TP", take_profit, "#6ee7b7", "4 4"),
+        ("Now", current, "#f8fafc", ""),
+        ("BE", break_even, "#cbd5e1", "5 5"),
+        ("Entry", entry, "#94a3b8", "5 5"),
+        ("SL", stop_loss, "#fda4af", "4 4"),
     ]
     label_positions = []
     for label, price, color, dash in sorted(
@@ -910,13 +912,13 @@ def position_candlestick_chart(
         chart_parts.extend(
             [
                 f'<line x1="{left}" x2="{left + plot_width}" y1="{true_y:.2f}" '
-                f'y2="{true_y:.2f}" stroke="{color}" stroke-width="1.5"'
-                f'{dash_attribute}/>',
+                f'y2="{true_y:.2f}" stroke="{color}" stroke-width="1" '
+                f'opacity="0.5"{dash_attribute}/>',
                 f'<line x1="{left + plot_width}" x2="{left + plot_width + 6}" '
                 f'y1="{true_y:.2f}" y2="{label_y:.2f}" stroke="{color}" '
-                'stroke-width="1"/>',
+                'stroke-width="0.8" opacity="0.5"/>',
                 f'<text x="{left + plot_width + 9}" y="{label_y + 4:.2f}" '
-                f'fill="{color}" font-size="12" font-weight="700">'
+                f'fill="{color}" font-size="11" font-weight="600">'
                 f'{html.escape(label)} {smart_number(price)}</text>',
             ]
         )
@@ -930,16 +932,16 @@ def position_candlestick_chart(
     chart_parts.extend(
         [
             f'<text x="{left}" y="{height - 7}" fill="#94a3b8" '
-            f'font-size="12">{html.escape(first_time)}</text>',
+            f'font-size="11">{html.escape(first_time)}</text>',
             f'<text x="{left + plot_width}" y="{height - 7}" '
-            f'text-anchor="end" fill="#94a3b8" font-size="12">'
+            f'text-anchor="end" fill="#94a3b8" font-size="11">'
             f'{html.escape(last_time)}</text></svg>',
         ]
     )
     return (
         '<div class="position-candle-wrap">'
-        f'<div class="position-candle-title"><span>📊 {len(parsed)} candles · '
-        f'{html.escape(str(interval))}</span><span>Completed candles</span></div>'
+        f'<div class="position-candle-title"><span>📊 Price · '
+        f'{html.escape(str(interval))}</span><span>{len(parsed)} candles</span></div>'
         f'{"".join(chart_parts)}</div>'
     )
 
@@ -2032,9 +2034,7 @@ def render_market_check_cards():
         f'<div class="market-check-row">{"".join(cards)}</div>',
         unsafe_allow_html=True,
     )
-    buyable_symbols = [
-        symbol for symbol in target_symbols if symbol not in open_symbols
-    ]
+    buyable_symbols = list(target_symbols)
     requested_buy_symbol = str(st.query_params.get("manual_buy", "")).upper()
     valid_buy_request = requested_buy_symbol in buyable_symbols
     if (
@@ -2056,6 +2056,11 @@ def render_market_check_cards():
             key="manual_buy_symbol",
             disabled=not buyable_symbols,
         )
+        if selected_symbol in open_symbols:
+            st.info(
+                "Buy more: quantity will be added and entry, stop loss, and "
+                "take profit will be recalculated."
+            )
         try:
             available_usdt = float(status.get("available_usdt"))
             max_open_positions = int(
@@ -2095,7 +2100,10 @@ def render_market_check_cards():
         elif trading_on_hold:
             st.caption("New buys are on hold, so manual buying is unavailable.")
         if st.button(
-            "Confirm market buy",
+            (
+                "Confirm buy more"
+                if selected_symbol in open_symbols else "Confirm market buy"
+            ),
             key="confirm_manual_buy",
             type="primary",
             disabled=(
@@ -2458,7 +2466,7 @@ def render_top_bar():
 
 
 @st.fragment(run_every=5)
-def render_dashboard():
+def render_dashboard(open_trades_only=False):
     state = read_state()
     status = read_json(
         STATUS_FILE,
@@ -2475,8 +2483,23 @@ def render_dashboard():
     live_markets = live_prices.get("prices", {})
     history = transaction_frame(read_transactions())
 
-    if positions:
+    open_title_column, open_focus_column = st.columns([4, 1])
+    with open_title_column:
         st.subheader("📈 Open trades")
+    with open_focus_column:
+        focus_label = (
+            "↙ Full dashboard" if open_trades_only else "⛶ Open trades only"
+        )
+        if st.button(
+            focus_label,
+            key="open_trades_section_focus_button",
+            type="primary",
+            width="stretch",
+        ):
+            st.session_state["open_trades_only"] = not open_trades_only
+            st.rerun()
+
+    if positions:
         position_items = list(positions.items())
         for start in range(0, len(position_items), 2):
             columns = st.columns(2, gap="small")
@@ -2487,13 +2510,18 @@ def render_dashboard():
                     with st.container(border=True):
                         market = status.get("markets", {}).get(symbol, {})
                         live_market = live_markets.get(symbol, {})
+                        position_market = {**market, **live_market}
                         render_position_progress(
                             symbol, position,
-                            live_market.get("price", market.get("price")),
+                            position_market.get("price"),
                             bool(status.get("trading_enabled", False)),
                             status.get("environment", state["environment"]),
-                            live_market,
+                            position_market,
                         )
+    elif open_trades_only:
+        st.info("No open trades are currently being monitored.")
+    if open_trades_only:
+        return
     render_results_by_symbol(history)
     render_market_suggestions(status)
     render_targets_outside_watchlist(status, positions)
@@ -2589,9 +2617,23 @@ def render_dashboard():
     )
 
 
-render_top_bar()
-render_market_check_cards()
-render_dashboard()
+open_trades_only = bool(st.session_state.get("open_trades_only", False))
+if open_trades_only:
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"], header {display:none!important}
+        [data-testid="stMainBlockContainer"] {max-width:100%!important;
+          padding:1rem 1.25rem!important}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    render_dashboard(open_trades_only=True)
+else:
+    render_top_bar()
+    render_market_check_cards()
+    render_dashboard()
 with st.sidebar:
     st.header("Version 2 AI")
     render_ai_advisor()

@@ -40,6 +40,8 @@ DEFAULT_MAX_TOTAL_EXPOSURE_USDT = Decimal(
 MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
 POLL_SECONDS = 60
 LIVE_PRICE_REFRESH_SECONDS = 10
+BINANCE_REQUEST_TIMEOUT_SECONDS = 20
+BINANCE_RECONNECT_SECONDS = 10
 SUGGESTION_REFRESH_SECONDS = 15 * 60
 WATCHLIST_MIN_QUOTE_VOLUME = 10_000_000
 WATCHLIST_LIMIT = 30
@@ -91,7 +93,27 @@ def create_client():
     api_secret = os.getenv("BINANCE_API_SECRET")
     if not api_key or not api_secret:
         raise RuntimeError("Set BINANCE_API_KEY and BINANCE_API_SECRET.")
-    return Client(api_key.strip(), api_secret.strip(), testnet=TESTNET)
+    return Client(
+        api_key.strip(),
+        api_secret.strip(),
+        testnet=TESTNET,
+        requests_params={"timeout": BINANCE_REQUEST_TIMEOUT_SECONDS},
+    )
+
+
+def create_client_with_retry():
+    while True:
+        try:
+            return create_client()
+        except KeyboardInterrupt:
+            raise
+        except Exception as error:
+            print(
+                "Could not connect to Binance: "
+                f"{type(error).__name__}: {error}. Retrying in "
+                f"{BINANCE_RECONNECT_SECONDS} seconds."
+            )
+            time.sleep(BINANCE_RECONNECT_SECONDS)
 
 
 def acquire_instance_lock():
@@ -284,7 +306,7 @@ def analyze_market(client, symbol, interval, strategy):
             "low": float(row["low"]),
             "close": float(row["close"]),
         }
-        for _, row in completed.tail(12).iterrows()
+        for _, row in completed.tail(48).iterrows()
     ]
     signal_candle_close_time = int(completed["close_time"].iloc[-1])
     entry_price = completed["close"].iloc[-1]
@@ -876,11 +898,12 @@ def current_exposure(positions):
 
 def buy(
     client, symbol, rules, analysis, positions, maximum_exposure, trade_amount,
-    max_open_positions, reason="strategy buy signal",
+    max_open_positions, reason="strategy buy signal", allow_existing=False,
 ):
-    if symbol in positions:
+    existing_position = positions.get(symbol)
+    if existing_position and not allow_existing:
         return None
-    if len(positions) >= max_open_positions:
+    if not existing_position and len(positions) >= max_open_positions:
         print(f"{symbol} BUY skipped: maximum open positions reached.")
         return None
 
@@ -904,6 +927,16 @@ def buy(
     quote_spent = Decimal(order["cummulativeQuoteQty"])
     average_price = quote_spent / executed_quantity
     stop_distance = Decimal(str(analysis["stop_distance"]))
+    reward_distance = Decimal(str(analysis["tp"] - analysis["entry"]))
+    if existing_position:
+        existing_quantity = Decimal(existing_position["quantity"])
+        existing_entry = Decimal(existing_position["entry"])
+        combined_quantity = existing_quantity + executed_quantity
+        average_price = (
+            existing_entry * existing_quantity + quote_spent
+        ) / combined_quantity
+        executed_quantity = combined_quantity
+
     position = {
         "symbol": symbol,
         "base_asset": rules["base_asset"],
@@ -913,20 +946,23 @@ def buy(
         "entry": str(average_price),
         "stop_loss": str(average_price - stop_distance),
         "take_profit": str(
-            average_price
-            + Decimal(str(analysis["tp"] - analysis["entry"]))
+            average_price + reward_distance
         ),
         "signal_candle_close_time": int(
             analysis["signal_candle_close_time"]
         ),
-        "opened_at": int(time.time()),
+        "opened_at": (
+            existing_position.get("opened_at", int(time.time()))
+            if existing_position else int(time.time())
+        ),
     }
     positions[symbol] = position
     save_positions(positions)
     record_transaction(
         {
             "side": "BUY", "symbol": symbol, "order_id": order["orderId"],
-            "quantity": str(executed_quantity), "price": str(average_price),
+            "quantity": str(Decimal(order["executedQty"])),
+            "price": str(quote_spent / Decimal(order["executedQty"])),
             "quote_amount": str(quote_spent), "quote_asset": rules["quote_asset"],
             "signal_candle_close_time": int(
                 analysis["signal_candle_close_time"]
@@ -935,8 +971,9 @@ def buy(
         }
     )
     print(
-        f"{symbol} BUY filled: {executed_quantity} {rules['base_asset']} "
-        f"at about {average_price:.8f}"
+        f"{symbol} {'BUY MORE' if existing_position else 'BUY'} filled: "
+        f"position is now {executed_quantity} {rules['base_asset']} "
+        f"at an average entry of {average_price:.8f}"
     )
     return position
 
@@ -1127,9 +1164,6 @@ def process_buy_requests(client, positions, rules_by_symbol, runtime_config):
         if symbol not in runtime_config["target_symbols"]:
             print(f"{symbol} manual BUY rejected: symbol is not a target.")
             continue
-        if symbol in positions:
-            print(f"{symbol} manual BUY skipped: position already exists.")
-            continue
         try:
             requested_amount = Decimal(str(request.get("amount_usdt", "20")))
         except InvalidOperation:
@@ -1149,7 +1183,11 @@ def process_buy_requests(client, positions, rules_by_symbol, runtime_config):
                 runtime_config["max_total_exposure_usdt"],
                 requested_amount,
                 runtime_config["max_open_positions"],
-                "dashboard manual buy",
+                (
+                    "dashboard manual buy more"
+                    if symbol in positions else "dashboard manual buy"
+                ),
+                allow_existing=True,
             )
         except (BinanceAPIException, BinanceOrderException) as error:
             print(f"{symbol} manual BUY Binance error: {error}")
@@ -1246,7 +1284,7 @@ def print_report(symbol, analysis):
 
 def main():
     acquire_instance_lock()
-    client = create_client()
+    client = create_client_with_retry()
     positions = load_positions()
     last_entry_candle = load_entry_cooldowns()
     cooldowns_recovered = False
@@ -1294,7 +1332,7 @@ def main():
                     )
                     record_market_overview(market_overview)
                     suggestions_updated_at = time.time()
-                except BinanceAPIException as error:
+                except Exception as error:
                     print(f"Could not refresh market suggestions: {error}")
             print(time.strftime("%Y-%m-%d %H:%M:%S"))
             print(
@@ -1342,7 +1380,7 @@ def main():
                     max_open_positions, trading_on_hold, interval, suggestions,
                     market_overview, runtime_config,
                 )
-            except (BinanceAPIException, BinanceOrderException) as error:
+            except Exception as error:
                 print(f"Could not update account status: {error}")
             wait_for_next_cycle(
                 client, positions, rules_by_symbol, active_symbols,
@@ -1351,6 +1389,13 @@ def main():
         except KeyboardInterrupt:
             print("\nStopped.")
             break
+        except Exception as error:
+            print(
+                "Bot cycle failed: "
+                f"{type(error).__name__}: {error}. Retrying in "
+                f"{BINANCE_RECONNECT_SECONDS} seconds."
+            )
+            time.sleep(BINANCE_RECONNECT_SECONDS)
 
 
 if __name__ == "__main__":
