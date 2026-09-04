@@ -4,7 +4,7 @@ import os
 import re
 import time
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -116,6 +116,13 @@ st.markdown(
       margin-top:.18rem;color:#cbd5e1;font-size:.68rem;font-weight:750}
     .position-progress-state {text-align:center;color:#e2e8f0;font-size:.72rem;
       font-weight:850;margin-top:.08rem}
+    .position-candle-wrap {margin:.55rem 0 .15rem}
+    .position-candle-title {display:flex;justify-content:space-between;gap:.5rem;
+      color:#cbd5e1;font-size:.7rem;font-weight:800;margin-bottom:.18rem}
+    .position-candle-chart {display:block;width:100%;height:auto;background:#020617;
+      border:1px solid #334155;border-radius:.2rem}
+    .position-candle-empty {padding:.55rem;color:#94a3b8;background:#020617;
+      border:1px solid #334155;border-radius:.2rem;font-size:.72rem}
     .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
       margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
@@ -125,6 +132,22 @@ st.markdown(
     .summary-item {padding:.42rem .55rem;border-radius:.5rem;background:#0f172a}
     .summary-label {color:#cbd5e1;font-size:.9rem;text-transform:uppercase;font-weight:800}
     .summary-value {color:#f8fafc;font-size:1.5rem;font-weight:900;line-height:1.2}
+    .bot-health-card-online {background:#052e16;border:2px solid #22c55e;
+      box-shadow:0 0 12px rgba(34,197,94,.8),inset 0 0 14px rgba(34,197,94,.18);
+      animation:bot-health-glow 1.8s ease-in-out infinite}
+    .bot-health-card-online .summary-label {color:#86efac}
+    .bot-health-card-online .summary-value {color:#4ade80;text-shadow:0 0 10px #22c55e}
+    .bot-health-card-delayed {background:#422006;border:1px solid #ca8a04}
+    .bot-health-card-delayed .summary-label,.bot-health-card-delayed .summary-value {color:#fde68a}
+    .bot-health-card-offline {background:#020617;border:1px solid #1e293b;box-shadow:none}
+    .bot-health-card-offline .summary-label {color:#475569}
+    .bot-health-card-offline .summary-value {color:#64748b;text-shadow:none}
+    .bot-health-last {margin-top:.14rem;color:#94a3b8;font-size:.68rem;
+      font-weight:750;line-height:1.15;white-space:nowrap}
+    @keyframes bot-health-glow {0%,100%{box-shadow:0 0 9px rgba(34,197,94,.55),
+      inset 0 0 12px rgba(34,197,94,.12)}50%{box-shadow:0 0 20px rgba(34,197,94,.95),
+      inset 0 0 18px rgba(34,197,94,.24)}}
+    @media(prefers-reduced-motion:reduce){.bot-health-card-online{animation:none}}
     .summary-tags {margin-top:.45rem}.pnl-positive{color:#4ade80}.pnl-negative{color:#f87171}
     .hold-banner {padding:.55rem .75rem;margin-bottom:.5rem;border-radius:.5rem;
       background:#7c2d12;color:#ffedd5;border:1px solid #f97316;
@@ -787,6 +810,140 @@ def transaction_frame(transactions):
     return history
 
 
+def position_candlestick_chart(
+    candles, current, entry, break_even, stop_loss, take_profit, interval,
+):
+    parsed = []
+    for candle in (candles or [])[-12:]:
+        try:
+            parsed.append(
+                {
+                    "close_time": int(candle["close_time"]),
+                    "open": float(candle["open"]),
+                    "high": float(candle["high"]),
+                    "low": float(candle["low"]),
+                    "close": float(candle["close"]),
+                }
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not parsed:
+        return (
+            '<div class="position-candle-empty">📊 Candles will appear after '
+            'the bot completes its next market check.</div>'
+        )
+
+    width, height = 720, 230
+    left, right, top, bottom = 14, 108, 12, 27
+    plot_width = width - left - right
+    plot_height = height - top - bottom
+    levels = [stop_loss, entry, break_even, current, take_profit]
+    chart_low = min([item["low"] for item in parsed] + levels)
+    chart_high = max([item["high"] for item in parsed] + levels)
+    price_span = chart_high - chart_low
+    if price_span <= 0:
+        price_span = abs(chart_high) * 0.01 or 1
+    chart_low -= price_span * 0.05
+    chart_high += price_span * 0.05
+
+    def y_position(price):
+        return top + (chart_high - price) / (chart_high - chart_low) * plot_height
+
+    step = plot_width / len(parsed)
+    candle_width = max(7, min(20, step * 0.48))
+    chart_parts = [
+        f'<svg class="position-candle-chart" viewBox="0 0 {width} {height}" '
+        f'role="img" aria-label="{html.escape(str(interval))} candlestick chart '
+        f'with stop loss, entry, break-even, current price, and take profit">',
+        f'<rect x="{left}" y="{top}" width="{plot_width}" height="{plot_height}" '
+        'fill="#020617"/>',
+    ]
+    for grid_index in range(1, 4):
+        grid_y = top + plot_height * grid_index / 4
+        chart_parts.append(
+            f'<line x1="{left}" x2="{left + plot_width}" y1="{grid_y:.2f}" '
+            f'y2="{grid_y:.2f}" stroke="#1e293b" stroke-width="1"/>'
+        )
+
+    for index, candle in enumerate(parsed):
+        candle_x = left + step * index + step / 2
+        rising = candle["close"] >= candle["open"]
+        color = "#4ade80" if rising else "#f87171"
+        high_y = y_position(candle["high"])
+        low_y = y_position(candle["low"])
+        body_top = y_position(max(candle["open"], candle["close"]))
+        body_bottom = y_position(min(candle["open"], candle["close"]))
+        body_height = max(2, body_bottom - body_top)
+        candle_tip = (
+            f'O {candle["open"]:.8f} · H {candle["high"]:.8f} · '
+            f'L {candle["low"]:.8f} · C {candle["close"]:.8f}'
+        )
+        chart_parts.extend(
+            [
+                f'<g><title>{html.escape(candle_tip)}</title>',
+                f'<line x1="{candle_x:.2f}" x2="{candle_x:.2f}" '
+                f'y1="{high_y:.2f}" y2="{low_y:.2f}" stroke="{color}" '
+                'stroke-width="2"/>',
+                f'<rect x="{candle_x - candle_width / 2:.2f}" '
+                f'y="{body_top:.2f}" width="{candle_width:.2f}" '
+                f'height="{body_height:.2f}" fill="{color}"/></g>',
+            ]
+        )
+
+    level_specs = [
+        ("TP", take_profit, "#4ade80", ""),
+        ("Now", current, "#fbbf24", "3 3"),
+        ("BE", break_even, "#f59e0b", "6 4"),
+        ("Entry", entry, "#60a5fa", "6 4"),
+        ("SL", stop_loss, "#f87171", ""),
+    ]
+    label_positions = []
+    for label, price, color, dash in sorted(
+        level_specs, key=lambda item: y_position(item[1])
+    ):
+        true_y = y_position(price)
+        label_y = true_y
+        if label_positions and label_y - label_positions[-1] < 15:
+            label_y = label_positions[-1] + 15
+        label_positions.append(label_y)
+        dash_attribute = f' stroke-dasharray="{dash}"' if dash else ""
+        chart_parts.extend(
+            [
+                f'<line x1="{left}" x2="{left + plot_width}" y1="{true_y:.2f}" '
+                f'y2="{true_y:.2f}" stroke="{color}" stroke-width="1.5"'
+                f'{dash_attribute}/>',
+                f'<line x1="{left + plot_width}" x2="{left + plot_width + 6}" '
+                f'y1="{true_y:.2f}" y2="{label_y:.2f}" stroke="{color}" '
+                'stroke-width="1"/>',
+                f'<text x="{left + plot_width + 9}" y="{label_y + 4:.2f}" '
+                f'fill="{color}" font-size="12" font-weight="700">'
+                f'{html.escape(label)} {smart_number(price)}</text>',
+            ]
+        )
+
+    first_time = datetime.fromtimestamp(
+        parsed[0]["close_time"] / 1000
+    ).astimezone().strftime("%H:%M")
+    last_time = datetime.fromtimestamp(
+        parsed[-1]["close_time"] / 1000
+    ).astimezone().strftime("%H:%M")
+    chart_parts.extend(
+        [
+            f'<text x="{left}" y="{height - 7}" fill="#94a3b8" '
+            f'font-size="12">{html.escape(first_time)}</text>',
+            f'<text x="{left + plot_width}" y="{height - 7}" '
+            f'text-anchor="end" fill="#94a3b8" font-size="12">'
+            f'{html.escape(last_time)}</text></svg>',
+        ]
+    )
+    return (
+        '<div class="position-candle-wrap">'
+        f'<div class="position-candle-title"><span>📊 {len(parsed)} candles · '
+        f'{html.escape(str(interval))}</span><span>Completed candles</span></div>'
+        f'{"".join(chart_parts)}</div>'
+    )
+
+
 def render_position_progress(
     symbol, position, current_price, trading_enabled, environment,
     live_market=None,
@@ -906,6 +1063,18 @@ def render_position_progress(
                 st.success(
                     f"Sell price update to {sell_price:.8f} queued."
                 )
+    st.markdown(
+        position_candlestick_chart(
+            live_market.get("candles"),
+            current,
+            entry,
+            break_even_price,
+            stop_loss,
+            take_profit,
+            runtime_config.get("interval", "5m"),
+        ),
+        unsafe_allow_html=True,
+    )
     progress_pct = progress * 100
     break_even_pct = (
         (break_even_price - stop_loss) / span * 100 if span > 0 else 50
@@ -1169,7 +1338,48 @@ def render_results_by_symbol(history):
 
 
 def filter_history(history):
-    with st.popover("Filters"):
+    today = datetime.now().astimezone().date()
+    yesterday = today - timedelta(days=1)
+    week_start = today - timedelta(days=today.weekday())
+
+    period_masks = {
+        "today": history["Time"].dt.date == today,
+        "yesterday": history["Time"].dt.date == yesterday,
+        "week": (
+            (history["Time"].dt.date >= week_start)
+            & (history["Time"].dt.date <= today)
+        ),
+        "all": pd.Series(True, index=history.index),
+    }
+
+    def period_win_count(period_name):
+        period_history = history[period_masks[period_name]]
+        completed = period_history[period_history["Side"] == "SELL"]
+        wins = int(
+            (completed["Est. Net P&L (USDT)"].fillna(0) > 0).sum()
+        )
+        return wins, len(completed)
+
+    period_labels = {}
+    for period_name, title in (
+        ("today", "Today"),
+        ("yesterday", "Yesterday"),
+        ("week", "This week"),
+        ("all", "All"),
+    ):
+        wins, completed = period_win_count(period_name)
+        period_labels[period_name] = f"{title} · ✅ {wins}/{completed}"
+
+    selected_period = st.radio(
+        "Transaction period",
+        ("today", "yesterday", "week", "all"),
+        format_func=lambda option: period_labels[option],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="transaction_period_filter",
+    )
+
+    with st.popover("⚙️ Advanced filters"):
         symbols = sorted(history["Symbol"].dropna().unique().tolist())
         sides = sorted(history["Side"].dropna().unique().tolist())
         reasons = sorted(history["Reason"].dropna().unique().tolist())
@@ -1190,7 +1400,7 @@ def filter_history(history):
             min_value=minimum_date, max_value=maximum_date,
         )
 
-    filtered = history.copy()
+    filtered = history[period_masks[selected_period]].copy()
     if selected_symbols:
         filtered = filtered[filtered["Symbol"].isin(selected_symbols)]
     if selected_sides:
@@ -1220,16 +1430,103 @@ def transaction_result(row):
 
 
 def style_transaction_row(row):
-    result = row.get("Result")
-    if result == "PROFIT":
+    result = str(row.get("Result", row.get("Outcome", ""))).upper()
+    if "PROFIT" in result:
         style = "background-color:rgba(34,197,94,.16);color:#bbf7d0;font-weight:650"
-    elif result == "LOSS":
+    elif "LOSS" in result:
         style = "background-color:rgba(239,68,68,.16);color:#fecaca;font-weight:650"
-    elif result == "BREAK EVEN":
+    elif "BREAK EVEN" in result:
         style = "background-color:rgba(148,163,184,.10);color:#e2e8f0"
+    elif "ENTRY" in result:
+        style = "background-color:rgba(59,130,246,.10);color:#dbeafe;font-weight:600"
     else:
         style = ""
     return [style] * len(row)
+
+
+def format_transaction_time(value):
+    if value is None or pd.isna(value):
+        return "—"
+    try:
+        moment = value.to_pydatetime() if hasattr(value, "to_pydatetime") else value
+        today = datetime.now().astimezone().date()
+        day_gap = (today - moment.date()).days
+        if day_gap == 0:
+            day_label = "Today"
+        elif day_gap == 1:
+            day_label = "Yesterday"
+        else:
+            day_label = moment.strftime("%d %b %Y")
+        return f"{day_label} · {moment.strftime('%H:%M:%S')}"
+    except (AttributeError, TypeError, ValueError):
+        return str(value)
+
+
+def smart_number(value, signed=False):
+    if value is None or pd.isna(value):
+        return "—"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    magnitude = abs(number)
+    if magnitude >= 1000:
+        decimals = 2
+    elif magnitude >= 1:
+        decimals = 4
+    elif magnitude >= 0.01:
+        decimals = 5
+    elif magnitude >= 0.0001:
+        decimals = 7
+    else:
+        decimals = 9
+    prefix = "+" if signed and number > 0 else ""
+    text = f"{abs(number) if number < 0 else number:,.{decimals}f}"
+    text = text.rstrip("0").rstrip(".")
+    if number < 0:
+        return f"-{text}"
+    return f"{prefix}{text}"
+
+
+def format_usdt(value, signed=False, approximate=False):
+    number = smart_number(value, signed=signed)
+    if number == "—":
+        return number
+    prefix = "≈" if approximate else ""
+    return f"{prefix}{number} USDT"
+
+
+def transaction_action(side):
+    return "🟢 Buy" if str(side).upper() == "BUY" else "🔴 Sell"
+
+
+def transaction_outcome(result):
+    return {
+        "ENTRY": "🔵 Entry",
+        "PROFIT": "✅ Profit",
+        "LOSS": "❌ Loss",
+        "BREAK EVEN": "⚪ Break even",
+    }.get(str(result).upper(), "⚪ Unknown")
+
+
+def transaction_reason_icon(reason):
+    reason_text = str(reason or "—")
+    lowered = reason_text.lower()
+    if "take profit" in lowered:
+        icon = "🎯"
+    elif "stop loss" in lowered:
+        icon = "🛑"
+    elif "rsi" in lowered:
+        icon = "📈"
+    elif "manual buy" in lowered:
+        icon = "🛒"
+    elif "manual sell" in lowered:
+        icon = "✋"
+    elif "strategy buy" in lowered:
+        icon = "🤖"
+    else:
+        icon = "ℹ️"
+    return f"{icon} {reason_text}"
 
 
 def format_market_number(value, decimals=8):
@@ -2019,22 +2316,46 @@ def render_top_bar():
     )
     ai_style = "" if ai_brief else " ai-brief-waiting"
     status_updated_at = status.get("updated_at")
+    bot_health_extra = ""
     if status_updated_at:
         status_age = max(0, int(time.time() - float(status_updated_at)))
         if status_age <= 120:
             bot_health = "ONLINE"
             bot_health_style = " bot-health-online"
+            bot_health_card_style = "bot-health-card-online"
         elif status_age <= 300:
             bot_health = "DELAYED"
             bot_health_style = " bot-health-delayed"
+            bot_health_card_style = "bot-health-card-delayed"
         else:
             bot_health = "OFFLINE"
             bot_health_style = " bot-health-offline"
+            bot_health_card_style = "bot-health-card-offline"
+            last_online = datetime.fromtimestamp(
+                float(status_updated_at)
+            ).astimezone().strftime("%d %b %H:%M")
+            offline_since = datetime.fromtimestamp(
+                float(status_updated_at) + 300
+            ).astimezone().strftime("%d %b %H:%M")
+            if status_age < 3600:
+                offline_age = f"{max(1, status_age // 60)}m ago"
+            elif status_age < 86400:
+                offline_age = f"{status_age // 3600}h ago"
+            else:
+                offline_age = f"{status_age // 86400}d ago"
+            bot_health_extra = (
+                f'<div class="bot-health-last">Offline since ~'
+                f'{html.escape(offline_since)}</div>'
+                f'<div class="bot-health-last">Last seen '
+                f'{html.escape(last_online)} · {html.escape(offline_age)}</div>'
+            )
         bot_health_detail = f"Last completed market check {status_age} seconds ago."
     else:
         status_age = None
         bot_health = "WAITING"
         bot_health_style = " bot-health-offline"
+        bot_health_card_style = "bot-health-card-offline"
+        bot_health_extra = '<div class="bot-health-last">Last online unknown</div>'
         bot_health_detail = "No completed market check is available."
     tags = (
         f'<span class="target-tag">INTERVAL &middot; '
@@ -2111,7 +2432,7 @@ def render_top_bar():
             <div class="summary-item"><div class="summary-label">Today net realized P&amp;L</div><div class="summary-value {today_class}">{today_pnl:+,.4f}</div></div>
             <div class="summary-item" title="Estimated net P&amp;L after both fees for positions opened today"><div class="summary-label">Today net unrealized P&amp;L</div><div class="summary-value {today_unrealized_class}">{today_unrealized_pnl:+,.4f}</div></div>
             <div class="summary-item" title="{today_wins} net wins from {today_completed_trades} completed trades today"><div class="summary-label">Today win rate</div><div class="summary-value {today_win_rate_class}">{today_win_rate_text}</div></div>
-            <div class="summary-item" title="{html.escape(bot_health_detail)}"><div class="summary-label">Bot health</div><div class="summary-value">{html.escape(bot_health)}</div></div>
+            <div class="summary-item {bot_health_card_style}" title="{html.escape(bot_health_detail)}"><div class="summary-label">Bot health</div><div class="summary-value">{html.escape(bot_health)}</div>{bot_health_extra}</div>
           </div>
           <div class="summary-tags">{tags}</div>
         </div>
@@ -2180,46 +2501,89 @@ def render_dashboard():
     if history.empty:
         st.info("No filled transactions have been recorded yet.")
         return
+    st.subheader("🧾 Transactions")
     filtered = filter_history(history).sort_values("Time", ascending=False)
     detail_columns = [
         "Time", "Environment", "Side", "Result", "Symbol", "Quantity", "Price",
         "Value", "Est. Fee (USDT)", "Quote asset", "Est. P&L (USDT)",
         "Est. Net P&L (USDT)", "Reason", "Order ID",
     ]
-    compact_columns = [
-        "Time", "Symbol", "Side", "Result", "Value", "Est. Fee (USDT)",
-        "Est. Net P&L (USDT)", "Reason",
-    ]
     filtered = filtered.copy()
     filtered["Result"] = filtered.apply(transaction_result, axis=1)
     for column in detail_columns:
         if column not in filtered:
             filtered[column] = None
-    detail_frame = filtered[detail_columns]
-    compact_frame = filtered[compact_columns]
-    styled_frame = compact_frame.style.apply(style_transaction_row, axis=1).format(
-        {
-            "Est. Fee (USDT)": lambda value: f"{value:,.4f}",
-            "Est. Net P&L (USDT)": lambda value: f"{value:+,.4f}",
-        },
-        na_rep="—",
+    detail_frame = filtered[detail_columns].copy()
+    download_frame = detail_frame.copy()
+    compact_frame = pd.DataFrame(index=filtered.index)
+    compact_frame["Local time"] = filtered["Time"].map(format_transaction_time)
+    compact_frame["Coin"] = filtered["Symbol"].map(
+        lambda value: f"🪙 {str(value).upper()}"
     )
-    st.dataframe(styled_frame, hide_index=True, width="stretch")
+    compact_frame["Action"] = filtered["Side"].map(transaction_action)
+    compact_frame["Outcome"] = filtered["Result"].map(transaction_outcome)
+    compact_frame["Amount"] = filtered["Value"].map(format_usdt)
+    compact_frame["Fee"] = filtered["Est. Fee (USDT)"].map(
+        lambda value: format_usdt(value, approximate=True)
+    )
+    compact_frame["Net P&L"] = filtered["Est. Net P&L (USDT)"].map(
+        lambda value: format_usdt(value, signed=True, approximate=True)
+    )
+    compact_frame["Reason"] = filtered["Reason"].map(transaction_reason_icon)
+    styled_frame = compact_frame.style.apply(style_transaction_row, axis=1)
+    st.caption(
+        f"Showing {len(compact_frame):,} transaction"
+        f"{'s' if len(compact_frame) != 1 else ''} · times use your local timezone · "
+        "≈ values use estimated fees"
+    )
+    st.dataframe(
+        styled_frame,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Local time": st.column_config.TextColumn("🕒 Local time", width="medium"),
+            "Coin": st.column_config.TextColumn("🪙 Coin", width="small"),
+            "Action": st.column_config.TextColumn("Action", width="small"),
+            "Outcome": st.column_config.TextColumn("Result", width="small"),
+            "Amount": st.column_config.TextColumn("💵 Amount", width="small"),
+            "Fee": st.column_config.TextColumn("🧾 Fee", width="small"),
+            "Net P&L": st.column_config.TextColumn("📊 Net P&L", width="small"),
+            "Reason": st.column_config.TextColumn("💡 Reason", width="medium"),
+        },
+    )
     with st.expander("🧾 Detailed transaction columns", expanded=False):
+        detail_frame["Time"] = detail_frame["Time"].map(format_transaction_time)
+        detail_frame["Symbol"] = detail_frame["Symbol"].map(
+            lambda value: f"🪙 {str(value).upper()}"
+        )
+        detail_frame["Side"] = detail_frame["Side"].map(transaction_action)
+        detail_frame["Result"] = detail_frame["Result"].map(transaction_outcome)
+        detail_frame["Reason"] = detail_frame["Reason"].map(
+            transaction_reason_icon
+        )
         detailed_style = detail_frame.style.apply(
             style_transaction_row, axis=1
         ).format(
             {
-                "Est. Fee (USDT)": lambda value: f"{value:,.4f}",
-                "Est. P&L (USDT)": lambda value: f"{value:+,.4f}",
-                "Est. Net P&L (USDT)": lambda value: f"{value:+,.4f}",
+                "Quantity": smart_number,
+                "Price": smart_number,
+                "Value": format_usdt,
+                "Est. Fee (USDT)": lambda value: format_usdt(
+                    value, approximate=True
+                ),
+                "Est. P&L (USDT)": lambda value: format_usdt(
+                    value, signed=True, approximate=True
+                ),
+                "Est. Net P&L (USDT)": lambda value: format_usdt(
+                    value, signed=True, approximate=True
+                ),
             },
             na_rep="—",
         )
         st.dataframe(detailed_style, hide_index=True, width="stretch")
     st.download_button(
-        "Download filtered transaction CSV",
-        detail_frame.to_csv(index=False),
+        "⬇️ Download filtered transactions",
+        download_frame.to_csv(index=False),
         file_name="binance_filtered_transactions.csv",
         mime="text/csv",
     )

@@ -276,6 +276,16 @@ def analyze_market(client, symbol, interval, strategy):
         data[column] = data[column].astype(float)
 
     completed = data.iloc[:-1]
+    recent_candles = [
+        {
+            "close_time": int(row["close_time"]),
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+        }
+        for _, row in completed.tail(12).iterrows()
+    ]
     signal_candle_close_time = int(completed["close_time"].iloc[-1])
     entry_price = completed["close"].iloc[-1]
     rsi_series = calculate_rsi(completed)
@@ -322,7 +332,12 @@ def analyze_market(client, symbol, interval, strategy):
         expected_net_reward_pct >= float(strategy["min_net_reward_pct"])
     )
     stop_risk_ok = bool(
-        stop_distance_pct <= float(strategy["max_stop_distance_pct"])
+        stop_distance_pct
+        <= float(
+            strategy.get(
+                "max_stop_distance_pct", DEFAULT_MAX_STOP_DISTANCE_PCT
+            )
+        )
     )
     buy_signal = bool(
         rsi_recovered
@@ -357,6 +372,7 @@ def analyze_market(client, symbol, interval, strategy):
         "buy_signal": buy_signal,
         "sell_signal": bool(rsi >= float(strategy["sell_rsi_threshold"])),
         "stop_distance": stop_distance,
+        "candles": recent_candles,
     }
 
 
@@ -487,6 +503,7 @@ def save_status(
                 "trend_ok": analysis["trend_ok"],
                 "reward_ok": analysis["reward_ok"],
                 "stop_risk_ok": analysis["stop_risk_ok"],
+                "candles": analysis["candles"],
                 "signal": market_signal(analysis),
                 "status": market_statuses.get(symbol, "UNKNOWN"),
             }
