@@ -911,7 +911,7 @@ def transaction_frame(transactions):
 
 def position_candlestick_chart(
     candles, current, entry, break_even, stop_loss, take_profit, interval,
-    max_view=False,
+    max_view=False, quantity=None, fee_rate=0.0,
 ):
     parsed = []
     for candle in (candles or [])[-48:]:
@@ -938,7 +938,16 @@ def position_candlestick_chart(
     # Keep six maximum-view cards visible as a 3 x 2 grid on laptop screens.
     # The max chart remains taller than the normal dashboard chart.
     width, height = 600, 235 if max_view else 220
-    left, right, top, bottom = 6, 82, 7, 22
+    level_labels = {}
+    for label, price in (("TP", take_profit), ("SL", stop_loss)):
+        text = f"{label} {smart_number(price)}"
+        if quantity is not None:
+            net_pnl = quantity * (price - entry) - quantity * (entry + price) * fee_rate
+            text += f" · Est. net {net_pnl:+.4f} USDT"
+        level_labels[label] = text
+    # Reserve room for the full price and net outcome on the same line.
+    label_width = max(len(text) for text in level_labels.values()) * 6.5 + 12
+    left, right, top, bottom = 6, max(82, label_width), 7, 22
     plot_width = width - left - right
     plot_height = height - top - bottom
     levels = [stop_loss, entry, break_even, current, take_profit]
@@ -1023,7 +1032,7 @@ def position_candlestick_chart(
                 'stroke-width="0.8" opacity="0.5"/>',
                 f'<text x="{left + plot_width + 9}" y="{label_y + 4:.2f}" '
                 f'fill="{color}" font-size="11" font-weight="600">'
-                f'{html.escape(label)} {smart_number(price)}</text>',
+                f'{html.escape(level_labels.get(label, f"{label} {smart_number(price)}"))}</text>',
             ]
         )
 
@@ -1180,6 +1189,8 @@ def render_position_progress(
             take_profit,
             runtime_config.get("interval", "5m"),
             max_view,
+            quantity=quantity,
+            fee_rate=fee_rate,
         ),
         unsafe_allow_html=True,
     )

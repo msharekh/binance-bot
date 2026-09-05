@@ -112,6 +112,44 @@ class StrategySignalTests(unittest.TestCase):
         self.assertFalse(app.automatic_buys_paused({"regime": "ACTIVE / POSITIVE"}))
         self.assertFalse(app.automatic_buys_paused({}))
 
+    @patch("app.sell", return_value=True)
+    @patch("app.save_positions")
+    def test_open_target_tracks_profit_floor_and_preserves_strategy(self, save, sell):
+        position = {"entry": "10", "quantity": "2.5", "stop_loss": "9.95",
+                    "take_profit": "10.3", "strategy_take_profit": "10.10"}
+        analysis = {"entry": 10, "min_net_profit_usdt": 0,
+                    "estimated_round_trip_fee_pct": 0.2, "sell_signal": False}
+        def check():
+            return app.decide_and_trade(None, "TESTUSDT", {}, analysis,
+                                       {"TESTUSDT": position}, 100, 25, 4, False, {})
+        self.assertEqual(check(), "MONITORING")
+        self.assertEqual(Decimal(position["take_profit"]), Decimal("10.10"))
+        analysis["min_net_profit_usdt"] = 1
+        check()
+        self.assertEqual(Decimal(position["take_profit"]),
+                         app.minimum_net_exit_price(Decimal("10"), Decimal("2.5"), 1, .2))
+        analysis["min_net_profit_usdt"] = 0
+        analysis["entry"] = 10.11
+        self.assertEqual(check(), "SELL FILLED")
+        self.assertEqual(sell.call_args.args[-1], "take profit")
+
+    @patch("app.sell")
+    @patch("app.save_positions")
+    def test_legacy_target_migrates_once_and_manual_target_is_untouched(self, save, sell):
+        for manual in (False, True):
+            position = {"entry": "10", "quantity": "2.5", "stop_loss": "9.95",
+                        "take_profit": "10.3", "manual_take_profit": manual}
+            analysis = {"entry": 10, "min_net_profit_usdt": 0,
+                        "risk_reward_ratio": 2, "sell_signal": False}
+            for ratio in (2, 3):
+                analysis["risk_reward_ratio"] = ratio
+                app.decide_and_trade(None, "TESTUSDT", {}, analysis,
+                                     {"TESTUSDT": position}, 100, 25, 4, False, {})
+                self.assertEqual(Decimal(position["take_profit"]),
+                                 Decimal("10.3" if manual else "10.10"))
+            self.assertEqual("strategy_take_profit" in position, not manual)
+        sell.assert_not_called()
+
     @patch("app.calculate_atr")
     @patch("app.calculate_rsi")
     def test_buy_requires_all_confirmations(self, calculate_rsi, calculate_atr):

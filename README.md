@@ -200,6 +200,21 @@ allowing production orders.
 
 ## Transaction dashboard
 
+### Temporary public access from this PC
+
+Run `./start-public-dashboard.ps1` in PowerShell to start a separate,
+password-protected dashboard on loopback port 8502 and a Cloudflare Quick Tunnel.
+The official `cloudflared.exe` utility must be in `.local/`.
+Find the generated HTTPS URL in `.local/tunnel-error.log` and the sign-in
+password in `.local/public-password.txt`. These local files are excluded from Git.
+The public dashboard exposes the same trading controls after sign-in.
+The public instance has the AI advisor disabled.
+
+Run `./stop-public-dashboard.ps1` to stop public access. The trading bot and
+existing Wi-Fi dashboard continue independently. Restarting public access
+generates a new password and URL. Keep the PC awake and connected while using
+it. Quick Tunnels are intended for temporary testing and have no uptime guarantee.
+
 Keep the bot running in its PowerShell window. Open a second PowerShell window
 in the project directory and start the dashboard:
 

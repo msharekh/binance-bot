@@ -410,6 +410,7 @@ def analyze_market(client, symbol, interval, strategy):
         "gross_reward_pct": gross_reward_pct,
         "expected_net_reward_pct": expected_net_reward_pct,
         "min_net_profit_usdt": float(strategy["min_net_profit_usdt"]),
+        "risk_reward_ratio": float(strategy["risk_reward_ratio"]),
         "estimated_round_trip_fee_pct": float(
             strategy["estimated_round_trip_fee_pct"]
         ),
@@ -1001,6 +1002,7 @@ def buy(
         "entry": str(average_price),
         "stop_loss": str(average_price - stop_distance),
         "take_profit": str(take_profit),
+        "strategy_take_profit": str(average_price + reward_distance),
         "signal_candle_close_time": int(
             analysis["signal_candle_close_time"]
         ),
@@ -1294,12 +1296,23 @@ def decide_and_trade(
                 DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT,
             ),
         )
-        if (
-            not position.get("manual_take_profit")
-            and minimum_profit_price > Decimal(position["take_profit"])
-        ):
-            position["take_profit"] = str(minimum_profit_price)
-            save_positions(positions)
+        if not position.get("manual_take_profit"):
+            # Older positions did not store the strategy target separately.
+            # Reconstruct it once from their original stop distance and the
+            # current reward/risk setting, then keep it fixed as prices move.
+            changed = False
+            if "strategy_take_profit" not in position:
+                entry = Decimal(position["entry"])
+                stop_distance = max(entry - Decimal(position["stop_loss"]), Decimal("0"))
+                ratio = Decimal(str(analysis.get("risk_reward_ratio", DEFAULT_RISK_REWARD_RATIO)))
+                position["strategy_take_profit"] = str(entry + stop_distance * ratio)
+                changed = True
+            target = max(Decimal(position["strategy_take_profit"]), minimum_profit_price)
+            if target != Decimal(position["take_profit"]):
+                position["take_profit"] = str(target)
+                changed = True
+            if changed:
+                save_positions(positions)
         if price <= Decimal(position["stop_loss"]):
             order = sell(client, symbol, rules, position, analysis, positions, "stop loss")
             return "SELL FILLED" if order else "SELL SKIPPED"

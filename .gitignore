@@ -16,3 +16,4 @@ buy_requests.jsonl
 buy_requests.processing.jsonl
 bot.lock
 .env
+.local/
