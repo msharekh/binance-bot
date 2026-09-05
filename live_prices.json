@@ -1,254 +1,254 @@
 {
   "environment": "production",
-  "updated_at": 1788518554,
+  "updated_at": 1788605501,
   "prices": {
     "PUMPUSDT": {
-      "price": "0.00419900",
-      "previous_price": "0.00420000",
-      "direction": "DOWN",
-      "change_pct": "-0.02380952380952380952380952381",
+      "price": "0.00419300",
+      "previous_price": "0.00419300",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "0.00454800",
       "last_progress_at": 1788454825
     },
     "XRPUSDT": {
-      "price": "1.44650000",
-      "previous_price": "1.44640000",
-      "direction": "UP",
-      "change_pct": "0.006913716814159292035398230088",
+      "price": "1.40420000",
+      "previous_price": "1.40420000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "1.48110000",
       "last_progress_at": 1788467361
     },
     "ENAUSDT": {
-      "price": "0.16760000",
-      "previous_price": "0.16770000",
-      "direction": "DOWN",
-      "change_pct": "-0.05963029218843172331544424568",
+      "price": "0.16360000",
+      "previous_price": "0.16360000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "0.17990000",
       "last_progress_at": 1788458240
     },
     "PROMUSDT": {
-      "price": "5.00600000",
-      "previous_price": "5.00000000",
-      "direction": "UP",
-      "change_pct": "0.1200",
+      "price": "5.25600000",
+      "previous_price": "5.25600000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "5.68300000",
       "last_progress_at": 1788505098
     },
     "UNIUSDT": {
-      "price": "6.28700000",
-      "previous_price": "6.29100000",
-      "direction": "DOWN",
-      "change_pct": "-0.06358289620092195199491336830",
+      "price": "6.26000000",
+      "previous_price": "6.26000000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "6.50000000",
       "last_progress_at": 1788474076
     },
     "NEARUSDT": {
-      "price": "2.00800000",
-      "previous_price": "2.00700000",
-      "direction": "UP",
-      "change_pct": "0.04982561036372695565520677628",
-      "progress_price": "2.03400000",
-      "last_progress_at": 1788516112
+      "price": "2.25300000",
+      "previous_price": "2.25300000",
+      "direction": "FLAT",
+      "change_pct": "0",
+      "progress_price": "2.28500000",
+      "last_progress_at": 1788591448
     },
     "BMTUSDT": {
-      "price": "0.01787000",
-      "previous_price": "0.01787000",
+      "price": "0.01827000",
+      "previous_price": "0.01827000",
       "direction": "FLAT",
       "change_pct": "0",
       "progress_price": "0.01944000",
       "last_progress_at": 1788405561
     },
     "ZECUSDT": {
-      "price": "999.70000000",
-      "previous_price": "999.58000000",
-      "direction": "UP",
-      "change_pct": "0.01200504211768942956041537446",
-      "progress_price": "1028.44000000",
-      "last_progress_at": 1788512072
+      "price": "1011.00000000",
+      "previous_price": "1011.15000000",
+      "direction": "DOWN",
+      "change_pct": "-0.01483459427384661029520842605",
+      "progress_price": "1046.61000000",
+      "last_progress_at": 1788541922
     },
     "PEPEUSDT": {
-      "price": "0.00000367",
-      "previous_price": "0.00000367",
+      "price": "0.00000353",
+      "previous_price": "0.00000353",
       "direction": "FLAT",
       "change_pct": "0",
       "progress_price": "0.00000388",
       "last_progress_at": 1788459062
     },
     "TUTUSDT": {
-      "price": "0.02438000",
-      "previous_price": "0.02438000",
-      "direction": "FLAT",
-      "change_pct": "0",
-      "progress_price": "0.02674000",
-      "last_progress_at": 1788400935
+      "price": "0.02822000",
+      "previous_price": "0.02820000",
+      "direction": "UP",
+      "change_pct": "0.07092198581560283687943262411",
+      "progress_price": "0.02825000",
+      "last_progress_at": 1788605496
     },
     "ADAUSDT": {
-      "price": "0.22070000",
-      "previous_price": "0.22070000",
+      "price": "0.21310000",
+      "previous_price": "0.21310000",
       "direction": "FLAT",
       "change_pct": "0",
       "progress_price": "0.22700000",
       "last_progress_at": 1788496636
     },
     "WLDUSDT": {
-      "price": "0.39010000",
-      "previous_price": "0.39020000",
-      "direction": "DOWN",
-      "change_pct": "-0.02562788313685289595079446438",
+      "price": "0.40110000",
+      "previous_price": "0.40110000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "0.40930000",
       "last_progress_at": 1788461616
     },
     "TRUMPUSDT": {
-      "price": "2.37100000",
-      "previous_price": "2.37000000",
-      "direction": "UP",
-      "change_pct": "0.04219409282700421940928270042",
+      "price": "2.38800000",
+      "previous_price": "2.38800000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "2.51200000",
       "last_progress_at": 1788454884
     },
     "HEMIUSDT": {
-      "price": "0.01573000",
-      "previous_price": "0.01569000",
+      "price": "0.01433000",
+      "previous_price": "0.01432000",
       "direction": "UP",
-      "change_pct": "0.2549394518801784576163161249",
+      "change_pct": "0.06983240223463687150837988827",
       "progress_price": "0.02153000",
       "last_progress_at": 1788416003
     },
     "ARBUSDT": {
-      "price": "0.13650000",
-      "previous_price": "0.13650000",
+      "price": "0.13360000",
+      "previous_price": "0.13360000",
       "direction": "FLAT",
       "change_pct": "0",
       "progress_price": "0.14600000",
       "last_progress_at": 1788483128
     },
     "CRCLBUSDT": {
-      "price": "102.03000000",
-      "previous_price": "102.02000000",
-      "direction": "UP",
-      "change_pct": "0.009801999607920015683199372672",
+      "price": "101.82000000",
+      "previous_price": "101.82000000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "103.32000000",
       "last_progress_at": 1788465883
     },
     "MUBARAKUSDT": {
-      "price": "0.03097000",
-      "previous_price": "0.03096000",
-      "direction": "UP",
-      "change_pct": "0.03229974160206718346253229974",
+      "price": "0.03212000",
+      "previous_price": "0.03212000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "0.03339000",
       "last_progress_at": 1788457900
     },
     "CHIPUSDT": {
-      "price": "0.05873000",
-      "previous_price": "0.05875000",
-      "direction": "DOWN",
-      "change_pct": "-0.03404255319148936170212765957",
+      "price": "0.05731000",
+      "previous_price": "0.05731000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "0.06208000",
       "last_progress_at": 1788488469
     },
     "XPLUSDT": {
-      "price": "0.09770000",
-      "previous_price": "0.09771000",
-      "direction": "DOWN",
-      "change_pct": "-0.01023436700440077781189233446",
-      "progress_price": "0.09862000",
-      "last_progress_at": 1788455616
+      "price": "0.09413000",
+      "previous_price": "0.09411000",
+      "direction": "UP",
+      "change_pct": "0.02125172670279460206141749017",
+      "progress_price": "0.10240000",
+      "last_progress_at": 1788522143
     },
     "SPCXBUSDT": {
-      "price": "150.53000000",
-      "previous_price": "150.56000000",
-      "direction": "DOWN",
-      "change_pct": "-0.01992561105207226354941551541",
+      "price": "149.20000000",
+      "previous_price": "149.20000000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "151.99000000",
       "last_progress_at": 1788454439
     },
     "LINKUSDT": {
-      "price": "12.05000000",
-      "previous_price": "12.04900000",
-      "direction": "UP",
-      "change_pct": "0.008299443937256203834343099012",
+      "price": "11.74800000",
+      "previous_price": "11.74800000",
+      "direction": "FLAT",
+      "change_pct": "0",
       "progress_price": "12.13900000",
       "last_progress_at": 1788513461
     },
     "DOGEUSDT": {
-      "price": "0.08763000",
-      "previous_price": "0.08763000",
+      "price": "0.08589000",
+      "previous_price": "0.08589000",
       "direction": "FLAT",
       "change_pct": "0",
       "progress_price": "0.08990000",
       "last_progress_at": 1788453298
     },
     "XLMUSDT": {
-      "price": "0.18480000",
-      "previous_price": "0.18480000",
+      "price": "0.18360000",
+      "previous_price": "0.18360000",
       "direction": "FLAT",
       "change_pct": "0",
       "progress_price": "0.18800000",
       "last_progress_at": 1788454331
     },
     "DASHUSDT": {
-      "price": "51.70000000",
-      "previous_price": "51.75000000",
-      "direction": "DOWN",
-      "change_pct": "-0.09661835748792270531400966184",
-      "progress_price": "54.50000000",
-      "last_progress_at": 1788512728
+      "price": "67.86000000",
+      "previous_price": "67.85000000",
+      "direction": "UP",
+      "change_pct": "0.01473839351510685335298452469",
+      "progress_price": "73.44000000",
+      "last_progress_at": 1788588620
     },
     "ONDOUSDT": {
-      "price": "0.36580000",
-      "previous_price": "0.36580000",
+      "price": "0.36810000",
+      "previous_price": "0.36810000",
       "direction": "FLAT",
       "change_pct": "0",
-      "progress_price": "0.36990000",
-      "last_progress_at": 1788458837
+      "progress_price": "0.37550000",
+      "last_progress_at": 1788583376
     },
     "CAKEUSDT": {
-      "price": "2.01100000",
-      "previous_price": "2.01100000",
+      "price": "2.13200000",
+      "previous_price": "2.13200000",
       "direction": "FLAT",
       "change_pct": "0",
-      "progress_price": "2.06700000",
-      "last_progress_at": 1788481061
+      "progress_price": "2.14500000",
+      "last_progress_at": 1788600400
     },
     "ZKCUSDT": {
-      "price": "0.04910000",
-      "previous_price": "0.04900000",
+      "price": "0.04950000",
+      "previous_price": "0.04940000",
       "direction": "UP",
-      "change_pct": "0.2040816326530612244897959184",
-      "progress_price": "0.05040000",
-      "last_progress_at": 1788512211
+      "change_pct": "0.2024291497975708502024291498",
+      "progress_price": "0.05160000",
+      "last_progress_at": 1788574832
     },
     "ZROUSDT": {
-      "price": "1.11200000",
-      "previous_price": "1.11100000",
-      "direction": "UP",
-      "change_pct": "0.09000900090009000900090009001",
-      "progress_price": "1.11900000",
-      "last_progress_at": 1788513419
+      "price": "1.04500000",
+      "previous_price": "1.04500000",
+      "direction": "FLAT",
+      "change_pct": "0",
+      "progress_price": "1.12600000",
+      "last_progress_at": 1788522153
     },
     "PENGUUSDT": {
-      "price": "0.00870400",
-      "previous_price": "0.00870400",
+      "price": "0.00860000",
+      "previous_price": "0.00860000",
       "direction": "FLAT",
       "change_pct": "0",
-      "progress_price": "0.00883100",
-      "last_progress_at": 1788512284
+      "progress_price": "0.00894500",
+      "last_progress_at": 1788523749
     },
     "ENSOUSDT": {
-      "price": "0.85500000",
-      "previous_price": "0.85500000",
+      "price": "0.88700000",
+      "previous_price": "0.88700000",
       "direction": "FLAT",
       "change_pct": "0",
-      "progress_price": "0.87300000",
-      "last_progress_at": 1788516388
+      "progress_price": "0.89300000",
+      "last_progress_at": 1788600446
     },
     "ZKPUSDT": {
-      "price": "0.04590000",
-      "previous_price": "0.04590000",
+      "price": "0.05010000",
+      "previous_price": "0.05010000",
       "direction": "FLAT",
       "change_pct": "0",
-      "progress_price": "0.04650000",
-      "last_progress_at": 1788512497
+      "progress_price": "0.05010000",
+      "last_progress_at": 1788605453
     }
   }
 }

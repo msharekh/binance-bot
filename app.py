@@ -10,6 +10,15 @@ from pathlib import Path
 import pandas as pd
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
+from rich.console import Console
+
+
+console = Console(highlight=False)
+
+
+def print_status(message, style="cyan"):
+    """Print a Windows Terminal-friendly status message."""
+    console.print(message, style=style, markup=False)
 
 
 # INTERVAL = Client.KLINE_INTERVAL_1MINUTE
@@ -30,6 +39,7 @@ DEFAULT_MAX_SUPPORT_DISTANCE_PCT = Decimal("0.30")
 DEFAULT_TREND_INTERVAL = Client.KLINE_INTERVAL_1HOUR
 DEFAULT_TREND_EMA_PERIOD = 50
 DEFAULT_MIN_NET_REWARD_PCT = Decimal("0.50")
+DEFAULT_MIN_NET_PROFIT_USDT = Decimal("0.50")
 DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT = Decimal("0.20")
 DEFAULT_SELL_RSI_THRESHOLD = Decimal("65")
 DEFAULT_MAX_STOP_DISTANCE_PCT = Decimal("0.80")
@@ -38,8 +48,10 @@ DEFAULT_MAX_TOTAL_EXPOSURE_USDT = Decimal(
     os.getenv("MAX_TOTAL_EXPOSURE_USDT", "75")
 )
 MAX_OPEN_POSITIONS = int(os.getenv("MAX_OPEN_POSITIONS", "3"))
-POLL_SECONDS = 60
-LIVE_PRICE_REFRESH_SECONDS = 10
+# Keep the dashboard responsive while leaving a short pause between full
+# Binance analysis cycles to avoid unnecessary API traffic.
+POLL_SECONDS = 15
+LIVE_PRICE_REFRESH_SECONDS = 2
 BINANCE_REQUEST_TIMEOUT_SECONDS = 20
 BINANCE_RECONNECT_SECONDS = 10
 SUGGESTION_REFRESH_SECONDS = 15 * 60
@@ -108,10 +120,11 @@ def create_client_with_retry():
         except KeyboardInterrupt:
             raise
         except Exception as error:
-            print(
+            print_status(
                 "Could not connect to Binance: "
                 f"{type(error).__name__}: {error}. Retrying in "
-                f"{BINANCE_RECONNECT_SECONDS} seconds."
+                f"{BINANCE_RECONNECT_SECONDS} seconds.",
+                "bold red",
             )
             time.sleep(BINANCE_RECONNECT_SECONDS)
 
@@ -147,11 +160,14 @@ def load_runtime_config():
         "trend_interval": DEFAULT_TREND_INTERVAL,
         "trend_ema_period": DEFAULT_TREND_EMA_PERIOD,
         "min_net_reward_pct": DEFAULT_MIN_NET_REWARD_PCT,
+        "min_net_profit_usdt": DEFAULT_MIN_NET_PROFIT_USDT,
         "estimated_round_trip_fee_pct": DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT,
         "atr_sl_multiplier": DEFAULT_ATR_SL_MULTIPLIER,
         "max_stop_distance_pct": DEFAULT_MAX_STOP_DISTANCE_PCT,
         "risk_reward_ratio": DEFAULT_RISK_REWARD_RATIO,
         "sell_rsi_threshold": DEFAULT_SELL_RSI_THRESHOLD,
+        "poll_seconds": POLL_SECONDS,
+        "live_price_refresh_seconds": LIVE_PRICE_REFRESH_SECONDS,
     }
     if not CONFIG_FILE.exists():
         return config
@@ -191,6 +207,9 @@ def load_runtime_config():
         min_net_reward_pct = Decimal(
             str(saved.get("min_net_reward_pct", DEFAULT_MIN_NET_REWARD_PCT))
         )
+        min_net_profit_usdt = Decimal(
+            str(saved.get("min_net_profit_usdt", DEFAULT_MIN_NET_PROFIT_USDT))
+        )
         estimated_round_trip_fee_pct = Decimal(
             str(
                 saved.get(
@@ -215,6 +234,8 @@ def load_runtime_config():
         sell_rsi_threshold = Decimal(
             str(saved.get("sell_rsi_threshold", DEFAULT_SELL_RSI_THRESHOLD))
         )
+        config["poll_seconds"] = max(10, int(saved.get("poll_seconds", POLL_SECONDS)))
+        config["live_price_refresh_seconds"] = max(2, int(saved.get("live_price_refresh_seconds", LIVE_PRICE_REFRESH_SECONDS)))
         if not symbols:
             raise ValueError("At least one target symbol is required.")
         if maximum_exposure <= 0:
@@ -239,6 +260,8 @@ def load_runtime_config():
             raise ValueError("Trend EMA period must be between 10 and 500.")
         if not 0 <= min_net_reward_pct <= 20:
             raise ValueError("Minimum net reward must be between 0% and 20%.")
+        if not 0 <= min_net_profit_usdt <= 1000:
+            raise ValueError("Minimum net profit must be between 0 and 1000 USDT.")
         if not 0 <= estimated_round_trip_fee_pct <= 5:
             raise ValueError("Estimated round-trip fee must be between 0% and 5%.")
         if not 0.1 <= atr_sl_multiplier <= 10:
@@ -260,6 +283,7 @@ def load_runtime_config():
         config["trend_interval"] = trend_interval
         config["trend_ema_period"] = trend_ema_period
         config["min_net_reward_pct"] = min_net_reward_pct
+        config["min_net_profit_usdt"] = min_net_profit_usdt
         config["estimated_round_trip_fee_pct"] = estimated_round_trip_fee_pct
         config["atr_sl_multiplier"] = atr_sl_multiplier
         config["max_stop_distance_pct"] = max_stop_distance_pct
@@ -385,6 +409,10 @@ def analyze_market(client, symbol, interval, strategy):
         "trend_ema": trend_ema,
         "gross_reward_pct": gross_reward_pct,
         "expected_net_reward_pct": expected_net_reward_pct,
+        "min_net_profit_usdt": float(strategy["min_net_profit_usdt"]),
+        "estimated_round_trip_fee_pct": float(
+            strategy["estimated_round_trip_fee_pct"]
+        ),
         "stop_distance_pct": stop_distance_pct,
         "rsi_recovered": rsi_recovered,
         "near_support": near_support,
@@ -492,6 +520,7 @@ def save_status(
             "trend_interval": strategy["trend_interval"],
             "trend_ema_period": strategy["trend_ema_period"],
             "min_net_reward_pct": str(strategy["min_net_reward_pct"]),
+            "min_net_profit_usdt": str(strategy["min_net_profit_usdt"]),
             "estimated_round_trip_fee_pct": str(
                 strategy["estimated_round_trip_fee_pct"]
             ),
@@ -896,6 +925,16 @@ def current_exposure(positions):
     )
 
 
+def minimum_net_exit_price(entry, quantity, minimum_net_profit, round_trip_fee_pct):
+    one_way_fee_rate = Decimal(str(round_trip_fee_pct)) / Decimal("200")
+    if quantity <= 0 or one_way_fee_rate >= 1:
+        return entry
+    return (
+        entry * quantity * (Decimal("1") + one_way_fee_rate)
+        + Decimal(str(minimum_net_profit))
+    ) / (quantity * (Decimal("1") - one_way_fee_rate))
+
+
 def buy(
     client, symbol, rules, analysis, positions, maximum_exposure, trade_amount,
     max_open_positions, reason="strategy buy signal", allow_existing=False,
@@ -904,7 +943,9 @@ def buy(
     if existing_position and not allow_existing:
         return None
     if not existing_position and len(positions) >= max_open_positions:
-        print(f"{symbol} BUY skipped: maximum open positions reached.")
+        print_status(
+            f"{symbol} BUY skipped: maximum open positions reached.", "yellow"
+        )
         return None
 
     remaining_exposure = maximum_exposure - current_exposure(positions)
@@ -913,7 +954,10 @@ def buy(
     quote_step = Decimal("1").scaleb(-rules["quote_precision"])
     amount = round_to_step(amount, quote_step)
     if amount < rules["min_notional"] or amount <= 0:
-        print(f"{symbol} BUY skipped: insufficient balance or exposure allowance.")
+        print_status(
+            f"{symbol} BUY skipped: insufficient balance or exposure allowance.",
+            "yellow",
+        )
         return None
 
     order = client.create_order(
@@ -937,6 +981,17 @@ def buy(
         ) / combined_quantity
         executed_quantity = combined_quantity
 
+    minimum_profit_price = minimum_net_exit_price(
+        average_price,
+        executed_quantity,
+        analysis.get("min_net_profit_usdt", DEFAULT_MIN_NET_PROFIT_USDT),
+        analysis.get(
+            "estimated_round_trip_fee_pct",
+            DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT,
+        ),
+    )
+    take_profit = max(average_price + reward_distance, minimum_profit_price)
+
     position = {
         "symbol": symbol,
         "base_asset": rules["base_asset"],
@@ -945,9 +1000,7 @@ def buy(
         "quantity": str(executed_quantity),
         "entry": str(average_price),
         "stop_loss": str(average_price - stop_distance),
-        "take_profit": str(
-            average_price + reward_distance
-        ),
+        "take_profit": str(take_profit),
         "signal_candle_close_time": int(
             analysis["signal_candle_close_time"]
         ),
@@ -970,10 +1023,11 @@ def buy(
             "reason": reason,
         }
     )
-    print(
+    print_status(
         f"{symbol} {'BUY MORE' if existing_position else 'BUY'} filled: "
         f"position is now {executed_quantity} {rules['base_asset']} "
-        f"at an average entry of {average_price:.8f}"
+        f"at an average entry of {average_price:.8f}",
+        "bold green",
     )
     return position
 
@@ -986,9 +1040,10 @@ def sell(client, symbol, rules, position, analysis, positions, reason):
     )
     notional = quantity * Decimal(str(analysis["entry"]))
     if quantity < rules["min_quantity"] or notional < rules["min_notional"]:
-        print(
+        print_status(
             f"{symbol} SELL skipped: free {rules['base_asset']} is below "
-            "the exchange minimum."
+            "the exchange minimum.",
+            "yellow",
         )
         return None
 
@@ -1014,7 +1069,10 @@ def sell(client, symbol, rules, position, analysis, positions, reason):
     )
     positions.pop(symbol, None)
     save_positions(positions)
-    print(f"{symbol} SELL filled: {executed_quantity}. Reason: {reason}")
+    print_status(
+        f"{symbol} SELL filled: {executed_quantity}. Reason: {reason}",
+        "bold red",
+    )
     return order
 
 
@@ -1089,6 +1147,7 @@ def process_sell_requests(client, positions, rules_by_symbol):
                 )
                 continue
             position["take_profit"] = str(sell_price)
+            position["manual_take_profit"] = True
             save_positions(positions)
             print(
                 f"{symbol} bot-managed sell price updated to {sell_price}."
@@ -1198,11 +1257,13 @@ def process_buy_requests(client, positions, rules_by_symbol, runtime_config):
 def wait_for_next_cycle(
     client, positions, rules_by_symbol, active_symbols, runtime_config,
 ):
+    poll_seconds = max(10, int(runtime_config.get("poll_seconds", POLL_SECONDS)))
+    live_refresh = max(2, int(runtime_config.get("live_price_refresh_seconds", LIVE_PRICE_REFRESH_SECONDS)))
     elapsed = 0
-    while elapsed < POLL_SECONDS:
-        time.sleep(min(2, POLL_SECONDS - elapsed))
+    while elapsed < poll_seconds:
+        time.sleep(min(2, poll_seconds - elapsed))
         elapsed += 2
-        if elapsed < POLL_SECONDS and elapsed % LIVE_PRICE_REFRESH_SECONDS == 0:
+        if elapsed < poll_seconds and elapsed % live_refresh == 0:
             refresh_live_prices(client, active_symbols)
         if TRADING_ENABLED:
             process_sell_requests(client, positions, rules_by_symbol)
@@ -1211,13 +1272,34 @@ def wait_for_next_cycle(
             )
 
 
+def automatic_buys_paused(market_overview):
+    regime = str((market_overview or {}).get("regime", "")).strip().upper()
+    return regime == "ACTIVE / WEAK"
+
+
 def decide_and_trade(
     client, symbol, rules, analysis, positions, maximum_exposure, trade_amount,
     max_open_positions, trading_on_hold, last_entry_candle,
+    market_overview=None,
 ):
     position = positions.get(symbol)
     price = Decimal(str(analysis["entry"]))
     if position:
+        minimum_profit_price = minimum_net_exit_price(
+            Decimal(position["entry"]),
+            Decimal(position["quantity"]),
+            analysis.get("min_net_profit_usdt", DEFAULT_MIN_NET_PROFIT_USDT),
+            analysis.get(
+                "estimated_round_trip_fee_pct",
+                DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT,
+            ),
+        )
+        if (
+            not position.get("manual_take_profit")
+            and minimum_profit_price > Decimal(position["take_profit"])
+        ):
+            position["take_profit"] = str(minimum_profit_price)
+            save_positions(positions)
         if price <= Decimal(position["stop_loss"]):
             order = sell(client, symbol, rules, position, analysis, positions, "stop loss")
             return "SELL FILLED" if order else "SELL SKIPPED"
@@ -1225,6 +1307,25 @@ def decide_and_trade(
             order = sell(client, symbol, rules, position, analysis, positions, "take profit")
             return "SELL FILLED" if order else "SELL SKIPPED"
         elif analysis["sell_signal"]:
+            one_way_fee_rate = Decimal(str(analysis.get(
+                "estimated_round_trip_fee_pct",
+                DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT,
+            ))) / Decimal("200")
+            quantity = Decimal(position["quantity"])
+            entry = Decimal(position["entry"])
+            estimated_net_profit = (
+                (price - entry) * quantity
+                - (entry * quantity + price * quantity) * one_way_fee_rate
+            )
+            minimum_net_profit = Decimal(str(analysis.get(
+                "min_net_profit_usdt", DEFAULT_MIN_NET_PROFIT_USDT
+            )))
+            if estimated_net_profit < minimum_net_profit:
+                print(
+                    f"{symbol} HOLD: RSI exit waiting for estimated net profit "
+                    f"of {minimum_net_profit:.2f} USDT."
+                )
+                return "WAITING FOR MIN NET PROFIT"
             order = sell(
                 client, symbol, rules, position, analysis, positions, "RSI sell signal"
             )
@@ -1236,6 +1337,13 @@ def decide_and_trade(
     if trading_on_hold:
         print(f"{symbol} ON HOLD: new buys are paused.")
         return "ON HOLD"
+
+    if automatic_buys_paused(market_overview):
+        print(
+            f"{symbol} AUTO BUY PAUSED: market regime is ACTIVE / WEAK. "
+            "Manual buying remains available."
+        )
+        return "WEAK MARKET PAUSE"
 
     if analysis["buy_signal"]:
         signal_candle = int(analysis["signal_candle_close_time"])
@@ -1260,12 +1368,29 @@ def decide_and_trade(
 
 def print_report(symbol, analysis):
     verdict = market_signal(analysis)
-    print("=" * 72)
-    print(f"{symbol} | Price: {analysis['entry']:.8f} | RSI: {analysis['rsi']:.2f}")
-    print(f"ATR: {analysis['atr']:.8f} | Support: {analysis['support']:.8f}")
-    print(f"Resistance: {analysis['resistance']:.8f} | Signal: {verdict}")
-    print(f"Suggested SL: {analysis['sl']:.8f} | Suggested TP: {analysis['tp']:.8f}")
-    print(
+    signal_style = {
+        "BUY": "bold green",
+        "SELL": "bold red",
+        "HOLD": "bold yellow",
+    }.get(verdict, "bold cyan")
+    console.rule(f"[bold cyan]{symbol}[/bold cyan]")
+    console.print(
+        f"[bold]{symbol}[/bold] | Price: [cyan]{analysis['entry']:.8f}[/cyan] | "
+        f"RSI: [magenta]{analysis['rsi']:.2f}[/magenta]"
+    )
+    console.print(
+        f"ATR: [magenta]{analysis['atr']:.8f}[/magenta] | "
+        f"Support: [green]{analysis['support']:.8f}[/green]"
+    )
+    console.print(
+        f"Resistance: [red]{analysis['resistance']:.8f}[/red] | "
+        f"Signal: [{signal_style}]{verdict}[/{signal_style}]"
+    )
+    console.print(
+        f"Suggested SL: [red]{analysis['sl']:.8f}[/red] | "
+        f"Suggested TP: [green]{analysis['tp']:.8f}[/green]"
+    )
+    print_status(
         "Buy checks | "
         f"RSI recovery: {'YES' if analysis['rsi_recovered'] else 'NO'} | "
         f"Near support: {'YES' if analysis['near_support'] else 'NO'} | "
@@ -1279,7 +1404,7 @@ def print_report(symbol, analysis):
         f"Expected net reward: {analysis['expected_net_reward_pct']:.3f}% | "
         f"Stop distance: {analysis['stop_distance_pct']:.3f}%"
     )
-    print("=" * 72)
+    console.rule(style="cyan")
 
 
 def main():
@@ -1303,7 +1428,11 @@ def main():
     market_overview = {}
     suggestions_updated_at = 0
     mode = f"{ENVIRONMENT.upper()} TRADING" if TRADING_ENABLED else "ANALYSIS ONLY"
-    print(f"Multi-market bot | {mode} | Press Ctrl+C to stop")
+    mode_style = "bold green" if TRADING_ENABLED else "bold yellow"
+    console.print(
+        f"[bold cyan]Multi-market bot[/bold cyan] | "
+        f"[{mode_style}]{mode}[/{mode_style}] | Press Ctrl+C to stop"
+    )
     while True:
         try:
             if TRADING_ENABLED:
@@ -1358,16 +1487,16 @@ def main():
                         market_statuses[symbol] = decide_and_trade(
                             client, symbol, rules_by_symbol[symbol], analysis, positions,
                             maximum_exposure, trade_amount, max_open_positions,
-                            trading_on_hold, last_entry_candle,
+                            trading_on_hold, last_entry_candle, market_overview,
                         )
                     else:
-                        print(f"{symbol}: trading disabled.")
+                        print_status(f"{symbol}: trading disabled.", "yellow")
                         market_statuses[symbol] = "ANALYSIS ONLY"
                 except (BinanceAPIException, BinanceOrderException) as error:
-                    print(f"{symbol} Binance error: {error}")
+                    print_status(f"{symbol} Binance error: {error}", "bold red")
                     market_statuses[symbol] = "BINANCE ERROR"
                 except Exception as error:
-                    print(f"{symbol} error: {error}")
+                    print_status(f"{symbol} error: {error}", "bold red")
                     market_statuses[symbol] = "ERROR"
             try:
                 available_usdt, total_portfolio_usdt, unpriced_assets = (
@@ -1381,19 +1510,20 @@ def main():
                     market_overview, runtime_config,
                 )
             except Exception as error:
-                print(f"Could not update account status: {error}")
+                print_status(f"Could not update account status: {error}", "bold red")
             wait_for_next_cycle(
                 client, positions, rules_by_symbol, active_symbols,
                 runtime_config,
             )
         except KeyboardInterrupt:
-            print("\nStopped.")
+            print_status("\nStopped.", "bold yellow")
             break
         except Exception as error:
-            print(
+            print_status(
                 "Bot cycle failed: "
                 f"{type(error).__name__}: {error}. Retrying in "
-                f"{BINANCE_RECONNECT_SECONDS} seconds."
+                f"{BINANCE_RECONNECT_SECONDS} seconds.",
+                "bold red",
             )
             time.sleep(BINANCE_RECONNECT_SECONDS)
 

@@ -87,6 +87,7 @@ class StrategySignalTests(unittest.TestCase):
             "trend_interval": app.DEFAULT_TREND_INTERVAL,
             "trend_ema_period": app.DEFAULT_TREND_EMA_PERIOD,
             "min_net_reward_pct": app.DEFAULT_MIN_NET_REWARD_PCT,
+            "min_net_profit_usdt": app.DEFAULT_MIN_NET_PROFIT_USDT,
             "estimated_round_trip_fee_pct": (
                 app.DEFAULT_ESTIMATED_ROUND_TRIP_FEE_PCT
             ),
@@ -94,6 +95,22 @@ class StrategySignalTests(unittest.TestCase):
             "risk_reward_ratio": app.DEFAULT_RISK_REWARD_RATIO,
             "sell_rsi_threshold": app.DEFAULT_SELL_RSI_THRESHOLD,
         }
+
+    def test_minimum_net_exit_price_covers_fees_and_profit_floor(self):
+        price = app.minimum_net_exit_price(
+            Decimal("10"), Decimal("2.5"), Decimal("0.5"), Decimal("0.2")
+        )
+        fee_rate = Decimal("0.001")
+        net_profit = (
+            (price - Decimal("10")) * Decimal("2.5")
+            - (price + Decimal("10")) * Decimal("2.5") * fee_rate
+        )
+        self.assertAlmostEqual(float(net_profit), 0.5, places=8)
+
+    def test_automatic_buys_pause_only_in_active_weak_market(self):
+        self.assertTrue(app.automatic_buys_paused({"regime": "ACTIVE / WEAK"}))
+        self.assertFalse(app.automatic_buys_paused({"regime": "ACTIVE / POSITIVE"}))
+        self.assertFalse(app.automatic_buys_paused({}))
 
     @patch("app.calculate_atr")
     @patch("app.calculate_rsi")

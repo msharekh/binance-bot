@@ -4,6 +4,7 @@ import os
 import re
 import time
 import uuid
+from bisect import bisect_right
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -31,6 +32,7 @@ LIVE_PRICE_FILE = PROJECT_DIR / "live_prices.json"
 CONFIG_FILE = PROJECT_DIR / "bot_config.json"
 SELL_REQUEST_FILE = PROJECT_DIR / "sell_requests.jsonl"
 BUY_REQUEST_FILE = PROJECT_DIR / "buy_requests.jsonl"
+MARKET_OVERVIEW_HISTORY_FILE = PROJECT_DIR / "market_overview_history.jsonl"
 INTERVAL_OPTIONS = [
     "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h",
     "12h", "1d", "3d", "1w", "1M",
@@ -46,12 +48,37 @@ st.markdown(
     '<h1 class="dashboard-title">Binance Market Bot Dashboard</h1>',
     unsafe_allow_html=True,
 )
-st.caption("Binance Spot · refreshes every 5 seconds")
+st.markdown(
+    '<div class="dashboard-subtitle">Binance Spot · refreshes every 5 seconds</div>',
+    unsafe_allow_html=True,
+)
 st.markdown(
     """
     <style>
     .dashboard-title {font-size:1.65rem!important;line-height:1.15!important;
       margin:.1rem 0 .05rem!important;padding:0!important}
+    .dashboard-subtitle {color:#94a3b8;font-size:.88rem;margin-bottom:.45rem}
+    .max-status-strip {position:fixed;top:.3rem;right:3.4rem;z-index:1002;
+      display:flex;align-items:center;gap:.55rem;margin:0;padding:.25rem .45rem;
+      border:1px solid #475569;border-radius:.35rem;background:#020617;
+      box-shadow:0 2px 9px rgba(0,0,0,.55)}
+    .max-status-item {color:#cbd5e1;font-size:.7rem;font-weight:800;
+      letter-spacing:.01em;white-space:nowrap}
+    .max-status-item strong {margin-left:.18rem;color:#f8fafc;font-size:.86rem;
+      font-weight:950;text-shadow:0 0 8px currentColor}
+    .max-status-win strong {color:#38bdf8}
+    .max-status-market {padding:.22rem .45rem;border-radius:.32rem;color:#bfdbfe;
+      background:#172554;border:1px solid #2563eb;font-size:.88rem;font-weight:950;
+      white-space:nowrap}
+    .max-status-market-weak {color:#fecaca;background:#450a0a;border-color:#ef4444}
+    .max-status-market-positive {color:#bbf7d0;background:#052e16;border-color:#16a34a}
+    .max-status-market-quiet {color:#fde68a;background:#422006;border-color:#ca8a04}
+    .max-status-online {margin-left:auto;color:#4ade80;font-size:.72rem;
+      font-weight:950;letter-spacing:.04em;white-space:nowrap;
+      text-shadow:0 0 12px rgba(34,197,94,1)}
+    .max-status-offline {margin-left:auto;color:#f87171;font-size:.72rem;
+      font-weight:950;letter-spacing:.04em;white-space:nowrap;
+      text-shadow:0 0 12px rgba(248,113,113,.8)}
     .symbol-title {color:#38bdf8;font-size:1.18rem;font-weight:800;letter-spacing:.03em}
     .target-tag {display:inline-block;padding:.28rem .58rem;margin:.12rem;border-radius:999px;
       background:#172554;color:#bfdbfe;border:1px solid #2563eb;font-weight:700}
@@ -93,12 +120,17 @@ st.markdown(
     .position-symbol a:hover {color:#7dd3fc;border-bottom-style:solid}
     .position-quantity {color:#94a3b8;font-size:.78rem}
     .position-pnl {font-size:1.05rem;font-weight:900;text-align:right}
+    .position-spent {display:inline-block;margin-left:.4rem;padding:.08rem .3rem;
+      border-radius:.25rem;background:#1e293b;color:#e2e8f0;font-size:.68rem;
+      font-weight:800;vertical-align:middle;white-space:nowrap}
     .position-stats {display:grid;grid-template-columns:repeat(2,1fr);gap:.3rem;
       margin-top:.15rem}
     .position-stat {padding:.3rem .4rem;border-radius:.35rem;background:#0f172a}
     .position-label {color:#94a3b8;font-size:.67rem;text-transform:uppercase;font-weight:700}
     .position-value {color:#e2e8f0;font-size:.83rem;font-weight:750}
     .position-progress-wrap {margin:1.85rem 0 .2rem}
+    .position-progress-wrap-max {margin:.28rem 0 .2rem}
+    .position-progress-wrap-max .position-current-label {top:.43rem}
     .position-progress-track {position:relative;height:2.3rem;border-radius:.3rem;
       border:1px solid #64748b;box-shadow:inset 0 1px 3px rgba(0,0,0,.45)}
     .position-progress-marker {position:absolute;top:-.28rem;width:.35rem;height:2.85rem;
@@ -116,7 +148,7 @@ st.markdown(
       margin-top:.18rem;color:#cbd5e1;font-size:.68rem;font-weight:750}
     .position-progress-state {text-align:center;color:#e2e8f0;font-size:.72rem;
       font-weight:850;margin-top:.08rem}
-    .position-candle-wrap {margin:.4rem 0 .1rem}
+    .position-candle-wrap {width:100%;margin:.18rem 0 .1rem}
     .position-candle-title {display:flex;justify-content:space-between;gap:.5rem;
       color:#94a3b8;font-size:.66rem;font-weight:700;margin-bottom:.14rem}
     .position-candle-chart {display:block;width:100%;height:auto;background:#0b1220;
@@ -237,6 +269,37 @@ def read_transactions():
     except OSError:
         return []
     return transactions
+
+
+def read_market_overview_history():
+    if not MARKET_OVERVIEW_HISTORY_FILE.exists():
+        return []
+    records = []
+    try:
+        for line in MARKET_OVERVIEW_HISTORY_FILE.read_text(
+            encoding="utf-8"
+        ).splitlines():
+            try:
+                record = json.loads(line)
+                records.append(
+                    (int(record["recorded_at"]), str(record.get("regime", "UNKNOWN")))
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+    except OSError:
+        return []
+    return sorted(records)
+
+
+def market_status_icon(regime):
+    text = str(regime or "UNKNOWN").upper()
+    if "WEAK" in text:
+        return f"🔴 {text}"
+    if "POSITIVE" in text:
+        return f"🟢 {text}"
+    if "QUIET" in text:
+        return f"🟡 {text}"
+    return f"🔵 {text}" if text != "UNKNOWN" else "⚪ UNKNOWN"
 
 
 def play_action_sound(transaction, sound_kind=None):
@@ -455,6 +518,8 @@ def render_settings_panel():
     interval = str(config.get("interval") or status.get("interval", "15m"))
     if interval not in INTERVAL_OPTIONS:
         interval = "15m"
+    poll_seconds = int(config.get("poll_seconds", 15))
+    live_price_refresh_seconds = int(config.get("live_price_refresh_seconds", 2))
     status_strategy = status.get("strategy", {})
 
     def strategy_value(name, default):
@@ -469,6 +534,7 @@ def render_settings_panel():
         trend_interval = "1h"
     trend_ema_period = int(strategy_value("trend_ema_period", 50))
     min_net_reward_pct = float(strategy_value("min_net_reward_pct", 0.50))
+    min_net_profit_usdt = float(strategy_value("min_net_profit_usdt", 0.50))
     estimated_round_trip_fee_pct = float(
         strategy_value("estimated_round_trip_fee_pct", 0.20)
     )
@@ -501,7 +567,8 @@ def render_settings_panel():
         )
         st.caption(
             f"Sell: SL {atr_sl_multiplier:g} ATR · TP {risk_reward_ratio:g}R · "
-            f"RSI ≥ {sell_rsi_threshold:g}"
+            f"RSI ≥ {sell_rsi_threshold:g} · net profit ≥ "
+            f"{min_net_profit_usdt:.2f} USDT"
         )
         with st.form("quick_add_target", clear_on_submit=True):
             add_symbol_column, add_button_column = st.columns([3, 1])
@@ -539,6 +606,7 @@ def render_settings_panel():
                         "trend_interval": trend_interval,
                         "trend_ema_period": trend_ema_period,
                         "min_net_reward_pct": str(min_net_reward_pct),
+                        "min_net_profit_usdt": str(min_net_profit_usdt),
                         "estimated_round_trip_fee_pct": str(
                             estimated_round_trip_fee_pct
                         ),
@@ -591,6 +659,11 @@ def render_settings_panel():
                         index=INTERVAL_OPTIONS.index(interval),
                         help="Timeframe for RSI, ATR, and support.",
                     )
+                speed_column, live_column = st.columns(2)
+                with speed_column:
+                    poll_seconds_input = st.number_input("Full check seconds", min_value=10, max_value=300, value=poll_seconds, step=5)
+                with live_column:
+                    live_price_refresh_seconds_input = st.number_input("Live price seconds", min_value=2, max_value=60, value=live_price_refresh_seconds, step=1)
             with buy_tab:
                 st.caption("All five checks must pass before a new buy.")
                 rsi_column, support_column = st.columns(2)
@@ -689,6 +762,18 @@ def render_settings_panel():
                     value=sell_rsi_threshold,
                     step=1.0,
                 )
+                min_net_profit_input = st.number_input(
+                    "Minimum net profit (USDT)",
+                    min_value=0.0,
+                    max_value=1000.0,
+                    value=min_net_profit_usdt,
+                    step=0.10,
+                    format="%.2f",
+                    help=(
+                        "Minimum estimated profit after buy and sell fees. "
+                        "Stop-loss and manual sells can exit below this amount."
+                    ),
+                )
                 st.caption("SL = entry − ATR distance · TP = entry + stop × reward/risk")
             with targets_tab:
                 st.caption("Add or remove USDT Spot markets.")
@@ -744,6 +829,7 @@ def render_settings_panel():
                         "trend_interval": trend_interval_input,
                         "trend_ema_period": int(trend_ema_period_input),
                         "min_net_reward_pct": str(min_net_reward_input),
+                        "min_net_profit_usdt": str(min_net_profit_input),
                         "estimated_round_trip_fee_pct": str(
                             estimated_fee_input
                         ),
@@ -751,6 +837,8 @@ def render_settings_panel():
                         "max_stop_distance_pct": str(max_stop_distance_input),
                         "risk_reward_ratio": str(risk_reward_ratio_input),
                         "sell_rsi_threshold": str(sell_rsi_threshold_input),
+                        "poll_seconds": int(poll_seconds_input),
+                        "live_price_refresh_seconds": int(live_price_refresh_seconds_input),
                     },
                 )
                 st.success(
@@ -784,6 +872,17 @@ def transaction_frame(transactions):
         history["Est. P&L (USDT)"], errors="coerce"
     )
     history["Value"] = pd.to_numeric(history["Value"], errors="coerce")
+    overview_history = read_market_overview_history()
+    overview_times = [item[0] for item in overview_history]
+
+    def regime_at_transaction(recorded_at):
+        try:
+            index = bisect_right(overview_times, int(recorded_at)) - 1
+        except (TypeError, ValueError):
+            return "UNKNOWN"
+        return overview_history[index][1] if index >= 0 else "UNKNOWN"
+
+    history["Market status"] = history["recorded_at"].map(regime_at_transaction)
     config = read_json(CONFIG_FILE, {})
     one_way_fee_pct = float(
         config.get("estimated_round_trip_fee_pct", 0.2)
@@ -812,6 +911,7 @@ def transaction_frame(transactions):
 
 def position_candlestick_chart(
     candles, current, entry, break_even, stop_loss, take_profit, interval,
+    max_view=False,
 ):
     parsed = []
     for candle in (candles or [])[-48:]:
@@ -833,8 +933,12 @@ def position_candlestick_chart(
             'the bot completes its next market check.</div>'
         )
 
-    width, height = 720, 190
-    left, right, top, bottom = 14, 104, 9, 23
+    # A taller aspect ratio and smaller plot margins use the full card space,
+    # especially when three open-position cards share one row.
+    # Keep six maximum-view cards visible as a 3 x 2 grid on laptop screens.
+    # The max chart remains taller than the normal dashboard chart.
+    width, height = 600, 235 if max_view else 220
+    left, right, top, bottom = 6, 82, 7, 22
     plot_width = width - left - right
     plot_height = height - top - bottom
     levels = [stop_loss, entry, break_even, current, take_profit]
@@ -876,8 +980,8 @@ def position_candlestick_chart(
         body_bottom = y_position(min(candle["open"], candle["close"]))
         body_height = max(2, body_bottom - body_top)
         candle_tip = (
-            f'O {candle["open"]:.8f} · H {candle["high"]:.8f} · '
-            f'L {candle["low"]:.8f} · C {candle["close"]:.8f}'
+            f'O {smart_number(candle["open"])} · H {smart_number(candle["high"])} · '
+            f'L {smart_number(candle["low"])} · C {smart_number(candle["close"])}'
         )
         chart_parts.extend(
             [
@@ -948,7 +1052,7 @@ def position_candlestick_chart(
 
 def render_position_progress(
     symbol, position, current_price, trading_enabled, environment,
-    live_market=None,
+    live_market=None, max_view=False,
 ):
     tradingview_url = (
         "https://www.tradingview.com/chart/?symbol="
@@ -1015,17 +1119,18 @@ def render_position_progress(
             f'target="_blank" rel="noopener noreferrer" '
             f'title="Open {html.escape(symbol)} on TradingView">'
             f'{html.escape(symbol)} &#8599;</a></div>'
-            f'<div class="position-quantity">Quantity: {quantity:.8f}</div>',
+            f'<div class="position-quantity">Quantity: {smart_number(quantity)}</div>',
             unsafe_allow_html=True,
         )
     with profit_column:
         st.markdown(
             f'<div class="position-pnl {pnl_style}">{estimated_net_pnl:+,.4f} USDT'
+            f'<span class="position-spent">Spent {entry_value:,.2f} USDT</span>'
             f'<br><small>Est. net {estimated_net_pct:+.2f}%</small></div>',
             unsafe_allow_html=True,
         )
     with action_column:
-        with st.popover("Sell now"):
+        with st.popover("💸" if max_view else "Sell now"):
             st.warning(
                 f"This submits a real market sell for the tracked {symbol} position. "
                 "The execution price may differ from the displayed price."
@@ -1074,6 +1179,7 @@ def render_position_progress(
             stop_loss,
             take_profit,
             runtime_config.get("interval", "5m"),
+            max_view,
         ),
         unsafe_allow_html=True,
     )
@@ -1097,27 +1203,29 @@ def render_position_progress(
     current_hue = max(0, min(current_hue, 135))
     st.markdown(
         f"""
-        <div class="position-progress-wrap">
+        <div class="position-progress-wrap{' position-progress-wrap-max' if max_view else ''}">
           <div class="position-progress-track" style="background:linear-gradient(90deg,#b91c1c 0%,#f59e0b {break_even_pct:.2f}%,#16a34a 100%)">
             <span class="position-progress-unfilled" style="width:{100 - progress_pct:.2f}%"></span>
             <span class="position-entry-marker" style="left:{break_even_pct:.2f}%" title="Fee-adjusted break-even"></span>
             <span class="position-progress-marker" style="left:{progress_pct:.2f}%" title="Current price"></span>
-            <span class="position-current-label" style="left:{label_pct:.2f}%;background:hsl({current_hue} 80% 32%)">{current:.8f}</span>
+            <span class="position-current-label" style="left:{label_pct:.2f}%;background:hsl({current_hue} 80% 32%)">{current:.2f}</span>
           </div>
-          <div class="position-progress-labels"><span>SL {stop_loss:.8f}</span><span>BE {break_even_price:.8f}</span><span>TP {take_profit:.8f}</span></div>
+          <div class="position-progress-labels"><span>SL {smart_number(stop_loss)}</span><span>BE {smart_number(break_even_price)}</span><span>TP {smart_number(take_profit)}</span></div>
           <div class="position-progress-state">{html.escape(stall_text)}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    if max_view:
+        return
     with st.expander("Position details", expanded=False):
         st.markdown(
             f"""
             <div class="position-stats">
-              <div class="position-stat"><div class="position-label">Entry / Spent</div><div class="position-value">Price {entry:.8f}<br>{entry_value:,.4f} USDT</div></div>
-              <div class="position-stat"><div class="position-label">Current / Value</div><div class="position-value">Price {current:.8f}<br>{current_value:,.4f} USDT</div></div>
-              <div class="position-stat"><div class="position-label">Take Profit / Est. Value</div><div class="position-value">Price {take_profit:.8f}<br>{take_profit_value:,.4f} USDT</div></div>
-              <div class="position-stat"><div class="position-label">Stop Loss / Est. Value</div><div class="position-value">Price {stop_loss:.8f}<br>{stop_loss_value:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Entry / Spent</div><div class="position-value">Price {smart_number(entry)}<br>{entry_value:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Current / Value</div><div class="position-value">Price {smart_number(current)}<br>{current_value:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Take Profit / Est. Value</div><div class="position-value">Price {smart_number(take_profit)}<br>{take_profit_value:,.4f} USDT</div></div>
+              <div class="position-stat"><div class="position-label">Stop Loss / Est. Value</div><div class="position-value">Price {smart_number(stop_loss)}<br>{stop_loss_value:,.4f} USDT</div></div>
               <div class="position-stat"><div class="position-label">Est. Buy Fee ({one_way_fee_pct:.3f}%)</div><div class="position-value">{estimated_buy_fee:,.4f} USDT</div></div>
               <div class="position-stat"><div class="position-label">Est. Sell Fee ({one_way_fee_pct:.3f}%)</div><div class="position-value">{estimated_sell_fee:,.4f} USDT</div></div>
               <div class="position-stat"><div class="position-label">Est. Net P&amp;L</div><div class="position-value">{estimated_net_pnl:+,.4f} USDT</div></div>
@@ -1181,7 +1289,7 @@ def render_market_suggestions(status):
                         f"""
                         <div class="suggestion-card">
                           <div class="suggestion-symbol">{symbol}{target_tag}</div>
-                          <div class="suggestion-stat">Price: {suggestion['price']:.8f}</div>
+                          <div class="suggestion-stat">Price: {smart_number(suggestion['price'])}</div>
                           <div class="suggestion-stat">24h change: {suggestion['change_pct']:+.2f}%</div>
                           <div class="suggestion-stat">24h range: {suggestion['range_pct']:.2f}%</div>
                           <div class="suggestion-stat">Volume: {suggestion['quote_volume_usdt']/1_000_000:.1f}M USDT</div>
@@ -1535,6 +1643,10 @@ def format_market_number(value, decimals=8):
     if value is None:
         return "N/A"
     try:
+        # Market prices are display values; avoid showing meaningless trailing
+        # zeros while retaining explicit precision for percentages/metrics.
+        if decimals == 8:
+            return smart_number(value)
         return f"{float(value):,.{decimals}f}"
     except (TypeError, ValueError):
         return "N/A"
@@ -1675,7 +1787,7 @@ def render_market_check_cards():
             "All targets", "Closest to buy", "4–5 checks",
             "Open positions", "None",
         ),
-        index=4,
+        index=1,
         horizontal=True,
         label_visibility="collapsed",
         key="market_card_view",
@@ -1692,7 +1804,7 @@ def render_market_check_cards():
                 -buy_proximity_score(symbol),
                 symbol,
             ),
-        )[:6]
+        )[:4]
     elif market_view == "4–5 checks":
         ordered_symbols = [
             symbol
@@ -2203,7 +2315,88 @@ def render_ai_advisor():
 
 
 @st.fragment(run_every=5)
-def render_top_bar():
+def render_max_status_strip():
+    state = read_state()
+    status = read_json(STATUS_FILE, {})
+    config = read_json(CONFIG_FILE, {})
+    live_prices = read_json(LIVE_PRICE_FILE, {})
+    if live_prices.get("environment") != status.get("environment"):
+        live_prices = {}
+    live_markets = live_prices.get("prices", {})
+    transactions = read_transactions()
+    notify_new_transaction(transactions)
+    history = transaction_frame(transactions)
+    today = datetime.now().astimezone().date()
+    today_realized = 0.0
+    today_wins = 0
+    today_completed = 0
+    if not history.empty:
+        sells = history[
+            (history["Side"] == "SELL") & (history["Time"].dt.date == today)
+        ]
+        today_completed = len(sells)
+        today_wins = int(
+            (sells["Est. Net P&L (USDT)"].fillna(0) > 0).sum()
+        )
+        today_realized = float(sells["Est. Net P&L (USDT)"].sum())
+    win_rate = (
+        f"{today_wins / today_completed * 100:.1f}%"
+        if today_completed else "N/A"
+    )
+    today_unrealized = 0.0
+    status_markets = status.get("markets", {})
+    fee_pct = float(config.get("estimated_round_trip_fee_pct", 0.2)) / 2
+    for symbol, position in state.get("positions", {}).items():
+        try:
+            opened_at = position.get("opened_at")
+            if not opened_at or datetime.fromtimestamp(
+                float(opened_at)
+            ).astimezone().date() != today:
+                continue
+            entry = float(position["entry"])
+            quantity = float(position["quantity"])
+            current = float(live_markets.get(symbol, {}).get(
+                "price", status_markets.get(symbol, {}).get("price", entry)
+            ))
+            today_unrealized += (
+                (current - entry) * quantity
+                - (entry + current) * quantity * fee_pct / 100
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    status_age = time.time() - float(status.get("updated_at", 0) or 0)
+    online = 0 <= status_age <= 120
+    online_class = "max-status-online" if online else "max-status-offline"
+    online_text = "● ONLINE" if online else "● OFFLINE"
+    market_regime = str(
+        status.get("market_overview", {}).get("regime", "WAITING")
+    ).upper()
+    if "WEAK" in market_regime:
+        market_class = "max-status-market-weak"
+    elif "POSITIVE" in market_regime:
+        market_class = "max-status-market-positive"
+    elif "QUIET" in market_regime:
+        market_class = "max-status-market-quiet"
+    else:
+        market_class = ""
+    realized_class = "pnl-positive" if today_realized >= 0 else "pnl-negative"
+    unrealized_class = "pnl-positive" if today_unrealized >= 0 else "pnl-negative"
+    st.markdown(
+        f"""
+        <div class="max-status-strip">
+          <span class="max-status-item max-status-win">Win rate <strong>{win_rate}</strong></span>
+          <span class="max-status-item">Realized <strong class="{realized_class}">{today_realized:+.4f}</strong></span>
+          <span class="max-status-item">Unrealized <strong class="{unrealized_class}">{today_unrealized:+.4f}</strong></span>
+          <span class="max-status-market {market_class}">MARKET · {html.escape(market_regime)}</span>
+          <span class="{online_class}">{online_text}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+@st.fragment(run_every=5)
+def render_top_bar(show_more_metrics=True):
     state = read_state()
     status = read_json(STATUS_FILE, {})
     config = read_json(CONFIG_FILE, {})
@@ -2447,6 +2640,8 @@ def render_top_bar():
         """,
         unsafe_allow_html=True,
     )
+    if not show_more_metrics:
+        return
     with st.expander("📈 More account and performance metrics", expanded=False):
         st.markdown(
             f"""
@@ -2483,28 +2678,27 @@ def render_dashboard(open_trades_only=False):
     live_markets = live_prices.get("prices", {})
     history = transaction_frame(read_transactions())
 
-    open_title_column, open_focus_column = st.columns([4, 1])
-    with open_title_column:
-        st.subheader("📈 Open trades")
-    with open_focus_column:
-        focus_label = (
-            "↙ Full dashboard" if open_trades_only else "⛶ Open trades only"
-        )
-        if st.button(
-            focus_label,
-            key="open_trades_section_focus_button",
-            type="primary",
-            width="stretch",
-        ):
-            st.session_state["open_trades_only"] = not open_trades_only
-            st.rerun()
+    if not open_trades_only:
+        open_title_column, open_focus_column = st.columns([4, 1])
+        with open_title_column:
+            st.subheader("📈 Open trades")
+        with open_focus_column:
+            if st.button(
+                "⛶ Open trades only",
+                key="open_trades_section_focus_button",
+                type="primary",
+                width="stretch",
+            ):
+                st.session_state["open_trades_only"] = True
+                st.rerun()
 
     if positions:
         position_items = list(positions.items())
-        for start in range(0, len(position_items), 2):
-            columns = st.columns(2, gap="small")
+        cards_per_row = 3 if open_trades_only else 2
+        for start in range(0, len(position_items), cards_per_row):
+            columns = st.columns(cards_per_row, gap="small")
             for column, (symbol, position) in zip(
-                columns, position_items[start : start + 2]
+                columns, position_items[start : start + cards_per_row]
             ):
                 with column:
                     with st.container(border=True):
@@ -2517,6 +2711,7 @@ def render_dashboard(open_trades_only=False):
                             bool(status.get("trading_enabled", False)),
                             status.get("environment", state["environment"]),
                             position_market,
+                            open_trades_only,
                         )
     elif open_trades_only:
         st.info("No open trades are currently being monitored.")
@@ -2532,7 +2727,7 @@ def render_dashboard(open_trades_only=False):
     st.subheader("🧾 Transactions")
     filtered = filter_history(history).sort_values("Time", ascending=False)
     detail_columns = [
-        "Time", "Environment", "Side", "Result", "Symbol", "Quantity", "Price",
+        "Time", "Environment", "Market status", "Side", "Result", "Symbol", "Quantity", "Price",
         "Value", "Est. Fee (USDT)", "Quote asset", "Est. P&L (USDT)",
         "Est. Net P&L (USDT)", "Reason", "Order ID",
     ]
@@ -2550,6 +2745,7 @@ def render_dashboard(open_trades_only=False):
     )
     compact_frame["Action"] = filtered["Side"].map(transaction_action)
     compact_frame["Outcome"] = filtered["Result"].map(transaction_outcome)
+    compact_frame["Market"] = filtered["Market status"].map(market_status_icon)
     compact_frame["Amount"] = filtered["Value"].map(format_usdt)
     compact_frame["Fee"] = filtered["Est. Fee (USDT)"].map(
         lambda value: format_usdt(value, approximate=True)
@@ -2573,6 +2769,7 @@ def render_dashboard(open_trades_only=False):
             "Coin": st.column_config.TextColumn("🪙 Coin", width="small"),
             "Action": st.column_config.TextColumn("Action", width="small"),
             "Outcome": st.column_config.TextColumn("Result", width="small"),
+            "Market": st.column_config.TextColumn("🌐 Market", width="medium"),
             "Amount": st.column_config.TextColumn("💵 Amount", width="small"),
             "Fee": st.column_config.TextColumn("🧾 Fee", width="small"),
             "Net P&L": st.column_config.TextColumn("📊 Net P&L", width="small"),
@@ -2586,6 +2783,9 @@ def render_dashboard(open_trades_only=False):
         )
         detail_frame["Side"] = detail_frame["Side"].map(transaction_action)
         detail_frame["Result"] = detail_frame["Result"].map(transaction_outcome)
+        detail_frame["Market status"] = detail_frame["Market status"].map(
+            market_status_icon
+        )
         detail_frame["Reason"] = detail_frame["Reason"].map(
             transaction_reason_icon
         )
@@ -2624,11 +2824,42 @@ if open_trades_only:
         <style>
         [data-testid="stSidebar"], header {display:none!important}
         [data-testid="stMainBlockContainer"] {max-width:100%!important;
-          padding:1rem 1.25rem!important}
+          padding:2.7rem .6rem .2rem!important}
+        .dashboard-title,.dashboard-subtitle {display:none!important}
+        [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {
+          gap:.35rem}
+        [data-testid="stMainBlockContainer"] [data-testid="stColumn"] {
+          padding:0!important}
+        .position-candle-wrap {margin:.05rem 0!important}
+        .position-candle-title {margin-bottom:.05rem!important}
+        .position-progress-wrap-max {margin:.12rem 0 .05rem!important}
+        .position-progress-wrap-max .position-progress-track {height:1.6rem!important}
+        .position-progress-wrap-max .position-progress-marker {
+          height:2.05rem!important;top:-.2rem!important}
+        .position-progress-wrap-max .position-current-label {top:.25rem!important}
+        .position-progress-labels,.position-progress-state {margin-top:.03rem!important}
+        [data-testid="stMarkdownContainer"]:has(.max-status-strip) {
+          position:fixed;top:.45rem;right:3.7rem;z-index:1002;width:auto}
+        [data-testid="stMarkdownContainer"]:has(.max-status-strip) .max-status-strip {
+          position:static}
+        .st-key-max_view_exit {position:fixed;top:.45rem;right:.7rem;
+          width:2.5rem;z-index:1002}
+        .st-key-max_view_exit button {min-height:2.2rem!important;padding:.2rem!important}
         </style>
         """,
         unsafe_allow_html=True,
     )
+ 
+if open_trades_only:
+    render_max_status_strip()
+    if st.button(
+        "↙",
+        key="max_view_exit",
+        help="Return to full dashboard",
+        type="primary",
+    ):
+        st.session_state["open_trades_only"] = False
+        st.rerun()
     render_dashboard(open_trades_only=True)
 else:
     render_top_bar()

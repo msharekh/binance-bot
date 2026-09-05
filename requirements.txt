@@ -2,3 +2,4 @@ pandas
 python-binance
 streamlit
 openai
+rich
