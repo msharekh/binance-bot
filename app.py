@@ -365,6 +365,9 @@ def analyze_market(client, symbol, interval, strategy):
     trend_ema = trend_closes.ewm(
         span=strategy["trend_ema_period"], adjust=False
     ).mean().iloc[-1]
+    ema_9 = completed["close"].ewm(span=9, adjust=False).mean().iloc[-1]
+    ema_21 = completed["close"].ewm(span=21, adjust=False).mean().iloc[-1]
+    momentum_ok = bool(ema_9 > ema_21)
     distance_to_support_pct = ((entry_price - support) / entry_price) * 100
     rsi_recovered = bool(
         previous_rsi <= float(strategy["buy_rsi_recovery"])
@@ -391,6 +394,7 @@ def analyze_market(client, symbol, interval, strategy):
         and trend_ok
         and reward_ok
         and stop_risk_ok
+        and momentum_ok
     )
     return {
         "entry": entry_price,
@@ -407,6 +411,8 @@ def analyze_market(client, symbol, interval, strategy):
         "trend_ema_period": strategy["trend_ema_period"],
         "trend_price": trend_price,
         "trend_ema": trend_ema,
+        "ema_9": ema_9,
+        "ema_21": ema_21,
         "gross_reward_pct": gross_reward_pct,
         "expected_net_reward_pct": expected_net_reward_pct,
         "min_net_profit_usdt": float(strategy["min_net_profit_usdt"]),
@@ -420,6 +426,7 @@ def analyze_market(client, symbol, interval, strategy):
         "trend_ok": trend_ok,
         "reward_ok": reward_ok,
         "stop_risk_ok": stop_risk_ok,
+        "momentum_ok": momentum_ok,
         "buy_signal": buy_signal,
         "sell_signal": bool(rsi >= float(strategy["sell_rsi_threshold"])),
         "stop_distance": stop_distance,
@@ -555,6 +562,7 @@ def save_status(
                 "trend_ok": analysis["trend_ok"],
                 "reward_ok": analysis["reward_ok"],
                 "stop_risk_ok": analysis["stop_risk_ok"],
+                "momentum_ok": analysis["momentum_ok"],
                 "candles": analysis["candles"],
                 "signal": market_signal(analysis),
                 "status": market_statuses.get(symbol, "UNKNOWN"),
@@ -1410,6 +1418,7 @@ def print_report(symbol, analysis):
         f"Trend: {'YES' if analysis['trend_ok'] else 'NO'} | "
         f"Net reward: {'YES' if analysis['reward_ok'] else 'NO'} | "
         f"Stop risk: {'YES' if analysis['stop_risk_ok'] else 'NO'}"
+        f" | Momentum EMA 9>21: {'YES' if analysis['momentum_ok'] else 'NO'}"
     )
     print(
         f"Trend: {analysis['trend_interval']} EMA {analysis['trend_ema_period']} "

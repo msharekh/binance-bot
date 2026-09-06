@@ -121,7 +121,7 @@ st.markdown(
     .position-quantity {color:#94a3b8;font-size:.78rem}
     .position-pnl {font-size:1.05rem;font-weight:900;text-align:right}
     .position-spent {display:inline-block;margin-left:.4rem;padding:.08rem .3rem;
-      border-radius:.25rem;background:#1e293b;color:#e2e8f0;font-size:.68rem;
+      border-radius:.25rem;background:#1e293b;color:#e2e8f0;font-size:1.05rem;
       font-weight:800;vertical-align:middle;white-space:nowrap}
     .position-stats {display:grid;grid-template-columns:repeat(2,1fr);gap:.3rem;
       margin-top:.15rem}
@@ -131,9 +131,9 @@ st.markdown(
     .position-progress-wrap {margin:1.85rem 0 .2rem}
     .position-progress-wrap-max {margin:.28rem 0 .2rem}
     .position-progress-wrap-max .position-current-label {top:.43rem}
-    .position-progress-track {position:relative;height:2.3rem;border-radius:.3rem;
+    .position-progress-track {position:relative;height:1.15rem;border-radius:.3rem;
       border:1px solid #64748b;box-shadow:inset 0 1px 3px rgba(0,0,0,.45)}
-    .position-progress-marker {position:absolute;top:-.28rem;width:.35rem;height:2.85rem;
+    .position-progress-marker {position:absolute;top:-.14rem;width:.35rem;height:1.43rem;
       border-radius:999px;background:#f8fafc;border:1px solid #020617;
       box-shadow:0 0 7px rgba(255,255,255,.9);transform:translateX(-50%)}
     .position-current-label {position:absolute;top:-1.65rem;transform:translateX(-50%);
@@ -806,10 +806,11 @@ def render_settings_panel():
                 for symbol in parsed_symbols
                 if not re.fullmatch(r"[A-Z0-9]+USDT", symbol)
             ]
+            # Keep unrelated settings saveable when an obsolete/bad symbol is
+            # already present in the persisted target list.
+            parsed_symbols = [symbol for symbol in parsed_symbols if symbol not in invalid]
             if not parsed_symbols:
                 st.error("Enter at least one targeted USDT symbol.")
-            elif invalid:
-                st.error("Invalid USDT symbols: " + ", ".join(invalid))
             elif trade_amount_input > maximum_input:
                 st.error("Per-trade amount cannot exceed maximum total exposure.")
             elif (
@@ -818,6 +819,8 @@ def render_settings_panel():
             ):
                 st.error("Larger-trend interval cannot be shorter than candle interval.")
             else:
+                if invalid:
+                    st.warning("Removed invalid USDT symbols: " + ", ".join(invalid))
                 write_config(
                     parsed_symbols, maximum_input, trade_amount_input,
                     max_open_positions_input, hold_input, interval_input,
@@ -912,6 +915,7 @@ def transaction_frame(transactions):
 def position_candlestick_chart(
     candles, current, entry, break_even, stop_loss, take_profit, interval,
     max_view=False, quantity=None, fee_rate=0.0,
+    original_take_profit=None, minimum_profit_price=None,
 ):
     parsed = []
     for candle in (candles or [])[-48:]:
@@ -937,20 +941,32 @@ def position_candlestick_chart(
     # especially when three open-position cards share one row.
     # Keep six maximum-view cards visible as a 3 x 2 grid on laptop screens.
     # The max chart remains taller than the normal dashboard chart.
-    width, height = 600, 235 if max_view else 220
-    level_labels = {}
-    for label, price in (("TP", take_profit), ("SL", stop_loss)):
-        text = f"{label} {smart_number(price)}"
-        if quantity is not None:
-            net_pnl = quantity * (price - entry) - quantity * (entry + price) * fee_rate
-            text += f" · Est. net {net_pnl:+.4f} USDT"
-        level_labels[label] = text
-    # Reserve room for the full price and net outcome on the same line.
-    label_width = max(len(text) for text in level_labels.values()) * 6.5 + 12
+    width, height = 600, 280 if max_view else 265
+    current_net = (current - entry) - (entry + current) * fee_rate
+    if quantity is not None:
+        current_net *= quantity
+    now_color = "#34d399" if current_net > 0 else "#fb7185"
+    level_specs = [
+        ("TP", take_profit, "#6ee7b7", "4 4"),
+        ("Now", current, now_color, ""),
+        ("BE", break_even, "#cbd5e1", "5 5"),
+        ("Entry", entry, "#94a3b8", "5 5"),
+        ("SL", stop_loss, "#fda4af", "4 4"),
+    ]
+    if original_take_profit is not None:
+        level_specs.append(("Original TP", original_take_profit, "#c4b5fd", "8 4"))
+    if minimum_profit_price is not None:
+        level_specs.append(("Min profit", minimum_profit_price, "#fbbf24", "2 4"))
+    # Reserve right-side room for the level label only; net P&L is rendered on
+    # the left, so it should not reduce the chart plotting area.
+    label_width = max(
+        len(f"{label} {smart_number(price)}")
+        for label, price, _, _ in level_specs
+    ) * 6.5 + 12
     left, right, top, bottom = 6, max(82, label_width), 7, 22
     plot_width = width - left - right
     plot_height = height - top - bottom
-    levels = [stop_loss, entry, break_even, current, take_profit]
+    levels = [price for _, price, _, _ in level_specs]
     chart_low = min([item["low"] for item in parsed] + levels)
     chart_high = max([item["high"] for item in parsed] + levels)
     price_span = chart_high - chart_low
@@ -967,7 +983,8 @@ def position_candlestick_chart(
     chart_parts = [
         f'<svg class="position-candle-chart" viewBox="0 0 {width} {height}" '
         f'role="img" aria-label="{html.escape(str(interval))} candlestick chart '
-        f'with stop loss, entry, break-even, current price, and take profit">',
+        f'with stop loss, entry, break-even, current price, take profit, '
+        f'original take profit, and minimum profit">',
         f'<rect x="{left}" y="{top}" width="{plot_width}" height="{plot_height}" '
         'fill="#0b1220"/>',
     ]
@@ -1005,13 +1022,57 @@ def position_candlestick_chart(
             ]
         )
 
-    level_specs = [
-        ("TP", take_profit, "#6ee7b7", "4 4"),
-        ("Now", current, "#f8fafc", ""),
-        ("BE", break_even, "#cbd5e1", "5 5"),
-        ("Entry", entry, "#94a3b8", "5 5"),
-        ("SL", stop_loss, "#fda4af", "4 4"),
-    ]
+    # Visual EMA overlays for short-term momentum context.
+    close_series = pd.Series([item["close"] for item in parsed], dtype="float64")
+    ema9_values = close_series.ewm(span=9, adjust=False).mean().tolist()
+    ema21_values = close_series.ewm(span=21, adjust=False).mean().tolist()
+    # Color each interval independently and split at EMA crossings.
+    for index in range(len(parsed) - 1):
+        fast_start, fast_end = ema9_values[index:index + 2]
+        slow_start, slow_end = ema21_values[index:index + 2]
+        start_difference = fast_start - slow_start
+        end_difference = fast_end - slow_end
+        boundaries = [0.0, 1.0]
+        if start_difference * end_difference < 0:
+            boundaries.insert(1, start_difference / (start_difference - end_difference))
+        for start, end in zip(boundaries, boundaries[1:]):
+            midpoint = (start + end) / 2
+            bullish = start_difference + (end_difference - start_difference) * midpoint > 0
+            color = "#22c55e" if bullish else "#ef4444"
+            opacity = "0.38" if bullish else "0.12"
+            points = []
+            for fraction, first, last in (
+                (start, fast_start, fast_end),
+                (end, fast_start, fast_end),
+                (end, slow_start, slow_end),
+                (start, slow_start, slow_end),
+            ):
+                x = left + step * (index + fraction) + step / 2
+                y = y_position(first + (last - first) * fraction)
+                points.append(f"{x:.2f},{y:.2f}")
+            chart_parts.append(
+                f'<polygon points="{" ".join(points)}" fill="{color}" '
+                f'opacity="{opacity}"/>'
+            )
+    for ema_values, color, label in (
+        (ema9_values, "#22d3ee", "EMA 9"),
+        (ema21_values, "#facc15", "EMA 21"),
+    ):
+        points = " ".join(
+            f"{left + step * index + step / 2:.2f},{y_position(value):.2f}"
+            for index, value in enumerate(ema_values)
+        )
+        chart_parts.append(
+            f'<polyline points="{points}" fill="none" stroke="{color}" '
+            'stroke-width="1.6" opacity="0.9"/>'
+        )
+    chart_parts.append(
+        f'<text x="{left + 4}" y="{top + 11}" fill="#22d3ee" '
+        'font-size="9" font-weight="700">EMA 9</text>'
+        f'<text x="{left + 42}" y="{top + 11}" fill="#facc15" '
+        'font-size="9" font-weight="700">EMA 21</text>'
+    )
+
     label_positions = []
     for label, price, color, dash in sorted(
         level_specs, key=lambda item: y_position(item[1])
@@ -1032,9 +1093,16 @@ def position_candlestick_chart(
                 'stroke-width="0.8" opacity="0.5"/>',
                 f'<text x="{left + plot_width + 9}" y="{label_y + 4:.2f}" '
                 f'fill="{color}" font-size="11" font-weight="600">'
-                f'{html.escape(level_labels.get(label, f"{label} {smart_number(price)}"))}</text>',
+                f'{html.escape(f"{label} {smart_number(price)}")}</text>',
             ]
         )
+        if quantity is not None and label in {"TP", "Now", "SL", "Original TP", "Min profit"}:
+            net_pnl = quantity * (price - entry) - quantity * (entry + price) * fee_rate
+            chart_parts.append(
+                f'<text x="{left}" y="{label_y + 4:.2f}" fill="{color}" '
+                f'font-size="11" font-weight="600">'
+                f'Est. net {net_pnl:+.2f} USDT</text>'
+            )
 
     first_time = datetime.fromtimestamp(
         parsed[0]["close_time"] / 1000
@@ -1191,6 +1259,17 @@ def render_position_progress(
             max_view,
             quantity=quantity,
             fee_rate=fee_rate,
+            original_take_profit=float(position.get(
+                "strategy_take_profit",
+                entry + max(entry - stop_loss, 0)
+                * float(runtime_config.get("risk_reward_ratio", 2)),
+            )),
+            minimum_profit_price=(
+                (entry * quantity * (1 + fee_rate)
+                 + float(runtime_config.get("min_net_profit_usdt", 0.50)))
+                / (quantity * (1 - fee_rate))
+                if quantity > 0 and fee_rate < 1 else entry
+            ),
         ),
         unsafe_allow_html=True,
     )
@@ -1380,7 +1459,7 @@ def render_targets_outside_watchlist(status, positions):
                     bool(market.get(name))
                     for name in (
                         "rsi_recovered", "near_support", "trend_ok", "reward_ok",
-                        "stop_risk_ok",
+                        "stop_risk_ok", "momentum_ok",
                     )
                 )
                 position_note = (
@@ -1699,7 +1778,7 @@ def render_market_check_cards():
     sell_rsi_threshold = float(config.get("sell_rsi_threshold", 65))
     buy_check_names = (
         "rsi_recovered", "near_support", "trend_ok", "reward_ok",
-        "stop_risk_ok",
+        "stop_risk_ok", "momentum_ok",
     )
     updated_at = status.get("updated_at")
     visual_updated_at = live_prices.get("updated_at") or updated_at
@@ -1796,7 +1875,7 @@ def render_market_check_cards():
         "Market card view",
         (
             "All targets", "Closest to buy", "4–5 checks",
-            "Open positions", "None",
+            "Momentum pending", "Open positions", "None",
         ),
         index=1,
         horizontal=True,
@@ -1821,6 +1900,12 @@ def render_market_check_cards():
             symbol
             for symbol in ordered_symbols
             if symbol not in open_symbols and readiness_score(symbol) >= 4
+        ]
+    elif market_view == "Momentum pending":
+        ordered_symbols = [
+            symbol for symbol in ordered_symbols
+            if symbol not in open_symbols
+            and markets.get(symbol, {}).get("momentum_ok") is False
         ]
     elif market_view == "Open positions":
         ordered_symbols = [
@@ -1955,6 +2040,7 @@ def render_market_check_cards():
                 ("trend_ok", "Above trend EMA"),
                 ("reward_ok", "Reward target"),
                 ("stop_risk_ok", "Safe stop"),
+                ("momentum_ok", "EMA 9 > EMA 21"),
             )
             check_items = []
             for check_name, check_label in check_labels:
@@ -1988,6 +2074,10 @@ def render_market_check_cards():
                         elif check_name == "stop_risk_ok":
                             stop_distance = float(market.get("stop_distance_pct"))
                             proximity = max_stop_distance_threshold / stop_distance
+                        elif check_name == "momentum_ok":
+                            ema_9 = float(market.get("ema_9"))
+                            ema_21 = float(market.get("ema_21"))
+                            proximity = ema_9 / ema_21 if ema_21 > 0 else 0
                     except (TypeError, ValueError, ZeroDivisionError):
                         proximity = 0.0
                 proximity = max(0.0, min(proximity, 0.95))
@@ -2705,14 +2795,23 @@ def render_dashboard(open_trades_only=False):
 
     if positions:
         position_items = list(positions.items())
-        cards_per_row = 3 if open_trades_only else 2
+        focused_symbol = st.session_state.get("focused_position_symbol") if open_trades_only else None
+        if focused_symbol in positions:
+            position_items = [(focused_symbol, positions[focused_symbol])]
+        cards_per_row = 1 if focused_symbol else (3 if open_trades_only else 2)
         for start in range(0, len(position_items), cards_per_row):
+            row_items = position_items[start : start + cards_per_row]
             columns = st.columns(cards_per_row, gap="small")
             for column, (symbol, position) in zip(
-                columns, position_items[start : start + cards_per_row]
+                columns, row_items
             ):
                 with column:
                     with st.container(border=True):
+                        if not focused_symbol:
+                            if st.button("⛶", key=f"maximize_position_{symbol}", help="Maximize this position"):
+                                st.session_state["focused_position_symbol"] = symbol
+                                st.session_state["open_trades_only"] = True
+                                st.rerun()
                         market = status.get("markets", {}).get(symbol, {})
                         live_market = live_markets.get(symbol, {})
                         position_market = {**market, **live_market}
@@ -2835,7 +2934,7 @@ if open_trades_only:
         <style>
         [data-testid="stSidebar"], header {display:none!important}
         [data-testid="stMainBlockContainer"] {max-width:100%!important;
-          padding:2.7rem .6rem .2rem!important}
+          padding:2.0rem .6rem .2rem!important}
         .dashboard-title,.dashboard-subtitle {display:none!important}
         [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {
           gap:.35rem}
@@ -2844,9 +2943,9 @@ if open_trades_only:
         .position-candle-wrap {margin:.05rem 0!important}
         .position-candle-title {margin-bottom:.05rem!important}
         .position-progress-wrap-max {margin:.12rem 0 .05rem!important}
-        .position-progress-wrap-max .position-progress-track {height:1.6rem!important}
+        .position-progress-wrap-max .position-progress-track {height:.8rem!important}
         .position-progress-wrap-max .position-progress-marker {
-          height:2.05rem!important;top:-.2rem!important}
+          height:1.03rem!important;top:-.1rem!important}
         .position-progress-wrap-max .position-current-label {top:.25rem!important}
         .position-progress-labels,.position-progress-state {margin-top:.03rem!important}
         [data-testid="stMarkdownContainer"]:has(.max-status-strip) {
@@ -2863,6 +2962,10 @@ if open_trades_only:
  
 if open_trades_only:
     render_max_status_strip()
+    if st.session_state.get("focused_position_symbol"):
+        if st.button("↩ Show all open positions", key="focused_position_back"):
+            st.session_state.pop("focused_position_symbol", None)
+            st.rerun()
     if st.button(
         "↙",
         key="max_view_exit",
@@ -2870,6 +2973,7 @@ if open_trades_only:
         type="primary",
     ):
         st.session_state["open_trades_only"] = False
+        st.session_state.pop("focused_position_symbol", None)
         st.rerun()
     render_dashboard(open_trades_only=True)
 else:

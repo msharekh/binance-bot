@@ -1,0 +1,292 @@
+{
+  "snapshotAt": "2026-09-06T01:37:37.413Z",
+  "results": [
+    {
+      "coins": 30,
+      "symbols": [
+        "PUMPUSDT",
+        "PROMUSDT",
+        "UNIUSDT",
+        "NEARUSDT",
+        "PEPEUSDT",
+        "TUTUSDT",
+        "ADAUSDT",
+        "WLDUSDT",
+        "TRUMPUSDT",
+        "HEMIUSDT",
+        "ARBUSDT",
+        "DOGEUSDT",
+        "DASHUSDT",
+        "CAKEUSDT",
+        "ZKCUSDT",
+        "MARSCOINUSDT",
+        "NOMUSDT",
+        "ZENUSDT",
+        "ASTERUSDT",
+        "FETUSDT",
+        "LTCUSDT",
+        "TAOUSDT",
+        "BNBUSDT",
+        "SUIUSDT",
+        "AAVEUSDT",
+        "SUSHIUSDT",
+        "币安人生USDT",
+        "OPUSDT",
+        "ENAUSDT",
+        "ZECUSDT"
+      ],
+      "all": {
+        "trades": 82,
+        "net": -1.86241664128102,
+        "winRate": 48.78048780487805,
+        "average": -0.022712398064402683,
+        "realizedDrawdown": 4.287249571,
+        "fees": 3.959974996744537,
+        "netPer50": -0.04571270153987092
+      },
+      "automatic": {
+        "trades": 56,
+        "net": -2.8997071941870334,
+        "winRate": 41.07142857142857,
+        "average": -0.05178048561048274,
+        "realizedDrawdown": 3.1320349941870336,
+        "fees": 2.7770911803138736,
+        "netPer50": -0.11831343208545184
+      }
+    },
+    {
+      "coins": 20,
+      "symbols": [
+        "BNBUSDT",
+        "ZECUSDT",
+        "DOGEUSDT",
+        "MARSCOINUSDT",
+        "UNIUSDT",
+        "DASHUSDT",
+        "SUIUSDT",
+        "ARBUSDT",
+        "NEARUSDT",
+        "ENAUSDT",
+        "LTCUSDT",
+        "ADAUSDT",
+        "PUMPUSDT",
+        "TUTUSDT",
+        "TRUMPUSDT",
+        "ZENUSDT",
+        "TAOUSDT",
+        "HEMIUSDT",
+        "CAKEUSDT",
+        "WLDUSDT"
+      ],
+      "all": {
+        "trades": 69,
+        "net": -1.6145727878710199,
+        "winRate": 46.3768115942029,
+        "average": -0.02339960562131913,
+        "realizedDrawdown": 3.805701521,
+        "fees": 3.1926914533345365,
+        "netPer50": -0.05258678986579623
+      },
+      "automatic": {
+        "trades": 47,
+        "net": -2.7127961261370332,
+        "winRate": 38.297872340425535,
+        "average": -0.0577190665135539,
+        "realizedDrawdown": 2.8093273361370334,
+        "fees": 2.216851862263874,
+        "netPer50": -0.14428549734204182
+      }
+    },
+    {
+      "coins": 15,
+      "symbols": [
+        "BNBUSDT",
+        "ZECUSDT",
+        "DOGEUSDT",
+        "MARSCOINUSDT",
+        "UNIUSDT",
+        "DASHUSDT",
+        "SUIUSDT",
+        "ARBUSDT",
+        "NEARUSDT",
+        "ENAUSDT",
+        "LTCUSDT",
+        "ADAUSDT",
+        "PUMPUSDT",
+        "TUTUSDT",
+        "TRUMPUSDT"
+      ],
+      "all": {
+        "trades": 61,
+        "net": -1.1331169178710199,
+        "winRate": 44.26229508196721,
+        "average": -0.01857568717821344,
+        "realizedDrawdown": 3.180585711,
+        "fees": 2.762125583334537,
+        "netPer50": -0.04371881877471917
+      },
+      "automatic": {
+        "trades": 40,
+        "net": -2.9857484561370335,
+        "winRate": 32.5,
+        "average": -0.07464371140342584,
+        "realizedDrawdown": 3.0822796661370337,
+        "fees": 1.8464941922638731,
+        "netPer50": -0.1764623630103392
+      }
+    }
+  ],
+  "ranked": [
+    {
+      "symbol": "BNBUSDT",
+      "volume": 259883202.73206,
+      "spread": 0.0013052529906597277
+    },
+    {
+      "symbol": "ZECUSDT",
+      "volume": 155004139.1963,
+      "spread": 0.000932962014450733
+    },
+    {
+      "symbol": "DOGEUSDT",
+      "volume": 120767841.99604,
+      "spread": 0.011027182003649999
+    },
+    {
+      "symbol": "MARSCOINUSDT",
+      "volume": 87706191.57629,
+      "spread": 0.03969041476482992
+    },
+    {
+      "symbol": "UNIUSDT",
+      "volume": 82049570.55924,
+      "spread": 0.013571283164815713
+    },
+    {
+      "symbol": "ZKCUSDT",
+      "volume": 79742984.42598,
+      "spread": 0.1998001998001917
+    },
+    {
+      "symbol": "DASHUSDT",
+      "volume": 74865700.1515,
+      "spread": 0.014512734924883398
+    },
+    {
+      "symbol": "SUIUSDT",
+      "volume": 70741192.99426,
+      "spread": 0.012423131871557238
+    },
+    {
+      "symbol": "ARBUSDT",
+      "volume": 68736815.86106,
+      "spread": 0.05185377236193362
+    },
+    {
+      "symbol": "ASTERUSDT",
+      "volume": 56692375.69309,
+      "spread": 0.12539184952978066
+    },
+    {
+      "symbol": "NEARUSDT",
+      "volume": 50135206.8734,
+      "spread": 0.04530011325029825
+    },
+    {
+      "symbol": "ENAUSDT",
+      "volume": 42842113.00458,
+      "spread": 0.053177346450406275
+    },
+    {
+      "symbol": "LTCUSDT",
+      "volume": 36014099.1924,
+      "spread": 0.018309988098504097
+    },
+    {
+      "symbol": "ADAUSDT",
+      "volume": 34129867.34367,
+      "spread": 0.04503490204908308
+    },
+    {
+      "symbol": "PUMPUSDT",
+      "volume": 33071314.018645,
+      "spread": 0.02559836170484318
+    },
+    {
+      "symbol": "TUTUSDT",
+      "volume": 31230809.8317,
+      "spread": 0.03540449637103768
+    },
+    {
+      "symbol": "TRUMPUSDT",
+      "volume": 29624796.632198,
+      "spread": 0.04155412424682692
+    },
+    {
+      "symbol": "PEPEUSDT",
+      "volume": 28597094.07400323,
+      "spread": 0.27434842249657965
+    },
+    {
+      "symbol": "ZENUSDT",
+      "volume": 23919440.11005,
+      "spread": 0.014045930191731637
+    },
+    {
+      "symbol": "TAOUSDT",
+      "volume": 22039514.56597,
+      "spread": 0.04200798151648574
+    },
+    {
+      "symbol": "HEMIUSDT",
+      "volume": 20238918.773817,
+      "spread": 0.08783487044357775
+    },
+    {
+      "symbol": "CAKEUSDT",
+      "volume": 19395837.05131,
+      "spread": 0.0445136879590425
+    },
+    {
+      "symbol": "WLDUSDT",
+      "volume": 19337916.47568,
+      "spread": 0.024804663276693284
+    },
+    {
+      "symbol": "NOMUSDT",
+      "volume": 17467387.14634,
+      "spread": 0.5509641873278252
+    },
+    {
+      "symbol": "AAVEUSDT",
+      "volume": 14893725.48007,
+      "spread": 0.007205908845246554
+    },
+    {
+      "symbol": "PROMUSDT",
+      "volume": 14800531.49985,
+      "spread": 0.03981684252438344
+    },
+    {
+      "symbol": "币安人生USDT",
+      "volume": 11539166.23443,
+      "spread": 0.07140307033201641
+    },
+    {
+      "symbol": "SUSHIUSDT",
+      "volume": 11538969.4153,
+      "spread": 0.0773694390715582
+    },
+    {
+      "symbol": "FETUSDT",
+      "volume": 11065386.16983,
+      "spread": 0.059898173105730305
+    },
+    {
+      "symbol": "OPUSDT",
+      "volume": 11019052.783792,
+      "spread": 0.08908685968819856
+    }
+  ],
+  "excluded": 0
+}

@@ -1,0 +1,10 @@
+{
+  "retrievedAt": "2026-09-06T01:40:02.296Z",
+  "activeSpotBaseAssets": 488,
+  "activeSpotPairs": 1362,
+  "activeUSDTSpotPairs": 487,
+  "botTargets": 30,
+  "percentOfSpotAssets": 6.147540983606557,
+  "percentOfUSDTPairs": 6.160164271047228,
+  "targetsNotActiveUSDT": []
+}
