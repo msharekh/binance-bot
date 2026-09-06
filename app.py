@@ -11,6 +11,7 @@ import pandas as pd
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from rich.console import Console
+from entry_conditions import capture_entry_conditions
 
 
 console = Console(highlight=False)
@@ -563,6 +564,8 @@ def save_status(
                 "reward_ok": analysis["reward_ok"],
                 "stop_risk_ok": analysis["stop_risk_ok"],
                 "momentum_ok": analysis["momentum_ok"],
+                "ema_9": analysis["ema_9"],
+                "ema_21": analysis["ema_21"],
                 "candles": analysis["candles"],
                 "signal": market_signal(analysis),
                 "status": market_statuses.get(symbol, "UNKNOWN"),
@@ -969,6 +972,7 @@ def buy(
         )
         return None
 
+    entry_conditions = capture_entry_conditions(analysis)
     order = client.create_order(
         symbol=symbol,
         side=Client.SIDE_BUY,
@@ -1011,6 +1015,10 @@ def buy(
         "stop_loss": str(average_price - stop_distance),
         "take_profit": str(take_profit),
         "strategy_take_profit": str(average_price + reward_distance),
+        "entry_conditions": (
+            existing_position.get("entry_conditions")
+            if existing_position else entry_conditions
+        ),
         "signal_candle_close_time": int(
             analysis["signal_candle_close_time"]
         ),
@@ -1031,6 +1039,7 @@ def buy(
                 analysis["signal_candle_close_time"]
             ),
             "reason": reason,
+            "entry_conditions": entry_conditions,
         }
     )
     print_status(

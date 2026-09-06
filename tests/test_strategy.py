@@ -35,7 +35,7 @@ class FakeClient:
     def get_klines(self, symbol, interval, limit):
         if interval == "1h":
             return make_klines(list(range(80, 80 + limit)), 79)
-        return make_klines([100] * limit, self.support_low)
+        return make_klines([100 + index * 0.001 for index in range(limit)], self.support_low)
 
 
 class FakeTickerClient:
@@ -166,6 +166,7 @@ class StrategySignalTests(unittest.TestCase):
         self.assertTrue(analysis["near_support"])
         self.assertTrue(analysis["trend_ok"])
         self.assertTrue(analysis["reward_ok"])
+        self.assertTrue(analysis["momentum_ok"])
         self.assertTrue(analysis["buy_signal"])
         for name in (
             "rsi_recovered", "near_support", "trend_ok", "reward_ok",

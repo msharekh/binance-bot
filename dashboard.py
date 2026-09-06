@@ -12,6 +12,7 @@ from urllib.parse import quote
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+from entry_conditions import entry_conditions_html
 
 from advisor import (
     AdvisorError,
@@ -225,6 +226,10 @@ st.markdown(
     .market-check-levels {margin-top:.15rem;color:#cbd5e1;font-size:.65rem}
     .market-check-levels summary {cursor:pointer;font-weight:800;color:#94a3b8}
     .market-check-levels .market-check-grid {margin-top:.2rem}
+    .market-condition-details {display:flex;flex-wrap:wrap;gap:3px 8px;margin-top:5px}
+    .market-condition-details .market-check-levels {flex:1 1 28%;margin:0}
+    .market-condition-details .market-check-levels summary {font-size:.62rem;white-space:nowrap}
+    .market-condition-details .market-check-levels[open] {flex-basis:100%;padding:4px 0}
     .live-up {color:#4ade80!important}.live-down {color:#f87171!important}
     .live-flat {color:#cbd5e1!important}
     @keyframes market-cycle-flash {0%{filter:brightness(2);transform:scale(1.015);
@@ -1189,6 +1194,7 @@ def render_position_progress(
         distance_label = "To SL"
         distance = max(((current - stop_loss) / current) * 100, 0)
 
+    st.markdown(entry_conditions_html(position), unsafe_allow_html=True)
     symbol_column, profit_column, action_column = st.columns([2, 2, 1])
     with symbol_column:
         st.markdown(
@@ -2218,7 +2224,18 @@ def render_market_check_cards():
                 f'&le; {max_stop_distance_threshold:g}%</span></div>'
                 f'<div class="market-check-stat">Action<span>Skip if wider</span></div>'
                 f'</div></details>'
+                f'<details class="market-check-levels"><summary>🟦 EMA 9/21</summary>'
+                f'<div class="market-check-grid">'
+                f'<div class="market-check-stat">EMA 9<span>'
+                f'{format_market_number(market.get("ema_9"))}</span></div>'
+                f'<div class="market-check-stat">EMA 21<span>'
+                f'{format_market_number(market.get("ema_21"))}</span></div>'
+                f'<div class="market-check-stat">Required<span>EMA 9 &gt; EMA 21</span></div>'
+                f'<div class="market-check-stat">Status<span>'
+                f'{"Met" if market.get("momentum_ok") is True else "Not met" if market.get("momentum_ok") is False else "Not available"}'
+                f'</span></div></div></details>'
             )
+        levels_html = f'<div class="market-condition-details">{levels_html}</div>'
         cards.append(
             f'<div class="market-check-card {color_class} {flash_class}">'
             f'<div class="market-check-head">'
@@ -2247,7 +2264,12 @@ def render_market_check_cards():
         f'<div class="market-check-row">{"".join(cards)}</div>',
         unsafe_allow_html=True,
     )
-    buyable_symbols = list(target_symbols)
+
+
+def render_manual_buy(status, positions):
+    config = read_json(CONFIG_FILE, {})
+    open_symbols = set(positions)
+    buyable_symbols = list(status.get("target_symbols", []))
     requested_buy_symbol = str(st.query_params.get("manual_buy", "")).upper()
     valid_buy_request = requested_buy_symbol in buyable_symbols
     if (
@@ -2827,6 +2849,7 @@ def render_dashboard(open_trades_only=False):
         st.info("No open trades are currently being monitored.")
     if open_trades_only:
         return
+    render_manual_buy(status, positions)
     render_results_by_symbol(history)
     render_market_suggestions(status)
     render_targets_outside_watchlist(status, positions)
