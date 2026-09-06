@@ -20,8 +20,9 @@ def capture_entry_conditions(analysis):
     }
 
 
-def entry_conditions_html(position):
-    checks = position.get("entry_conditions") or {}
+def entry_conditions_html(position, market=None):
+    live = market is not None
+    checks = market if live else (position.get("entry_conditions") or {})
     badges = []
     for key, label, description in ENTRY_CHECKS:
         value = checks.get(key)
@@ -30,6 +31,12 @@ def entry_conditions_html(position):
             ("#ef4444", "&#215;", "Not met at entry") if value is False else
             ("#94a3b8", "?", "Not recorded at entry")
         )
+        if live:
+            state = (
+                "Met in latest analysis" if value is True else
+                "Not met in latest analysis" if value is False else
+                "Not available in latest analysis"
+            )
         title = escape(f"{description}: {state}", quote=True)
         badges.append(
             f'<span title="{title}" aria-label="{title}" style="display:inline-flex;'
@@ -42,6 +49,7 @@ def entry_conditions_html(position):
     return (
         '<div style="display:flex;flex-wrap:wrap;gap:6px 10px;'
         'align-items:center;font-size:11px;margin:6px 0">'
-        '<span style="color:#94a3b8">At entry</span>'
+        + ('<span style="color:#94a3b8" title="Updates with completed-candle analysis">Current conditions</span>'
+           if live else '<span style="color:#94a3b8">At entry</span>')
         + "".join(badges) + '</div>'
     )

@@ -1136,9 +1136,10 @@ def render_position_progress(
     symbol, position, current_price, trading_enabled, environment,
     live_market=None, max_view=False,
 ):
-    tradingview_url = (
-        "https://www.tradingview.com/chart/?symbol="
-        + quote(f"BINANCE:{symbol}", safe="")
+    binance_url = (
+        "https://www.binance.com/en/trade/"
+        + quote(f"{symbol[:-4]}_USDT", safe="")
+        + "?type=spot"
     )
     stop_loss = float(position["stop_loss"])
     entry = float(position["entry"])
@@ -1194,13 +1195,13 @@ def render_position_progress(
         distance_label = "To SL"
         distance = max(((current - stop_loss) / current) * 100, 0)
 
-    st.markdown(entry_conditions_html(position), unsafe_allow_html=True)
+    st.markdown(entry_conditions_html(position, live_market), unsafe_allow_html=True)
     symbol_column, profit_column, action_column = st.columns([2, 2, 1])
     with symbol_column:
         st.markdown(
-            f'<div class="position-symbol"><a href="{html.escape(tradingview_url)}" '
+            f'<div class="position-symbol"><a href="{html.escape(binance_url)}" '
             f'target="_blank" rel="noopener noreferrer" '
-            f'title="Open {html.escape(symbol)} on TradingView">'
+            f'title="Open {html.escape(symbol)} on Binance">'
             f'{html.escape(symbol)} &#8599;</a></div>'
             f'<div class="position-quantity">Quantity: {smart_number(quantity)}</div>',
             unsafe_allow_html=True,
@@ -1213,7 +1214,7 @@ def render_position_progress(
             unsafe_allow_html=True,
         )
     with action_column:
-        with st.popover("💸" if max_view else "Sell now"):
+        with st.popover("💸", help="Sell now"):
             st.warning(
                 f"This submits a real market sell for the tracked {symbol} position. "
                 "The execution price may differ from the displayed price."
@@ -1957,9 +1958,10 @@ def render_market_check_cards():
             win_rate_tag = '<div class="market-win-tag">No trade history</div>'
         else:
             win_rate_tag = ""
-        tradingview_url = (
-            "https://www.tradingview.com/chart/?symbol="
-            + quote(f"BINANCE:{symbol}", safe="")
+        binance_url = (
+            "https://www.binance.com/en/trade/"
+            + quote(f"{symbol[:-4]}_USDT", safe="")
+            + "?type=spot"
         )
         live_market = live_markets.get(symbol, {})
         display_price = live_market.get("price", market.get("price"))
@@ -2240,9 +2242,9 @@ def render_market_check_cards():
             f'<div class="market-check-card {color_class} {flash_class}">'
             f'<div class="market-check-head">'
             f'<span class="market-check-symbol"><a '
-            f'href="{html.escape(tradingview_url)}" target="_blank" '
+            f'href="{html.escape(binance_url)}" target="_blank" '
             f'rel="noopener noreferrer" '
-            f'title="Open {html.escape(symbol)} on TradingView">'
+            f'title="Open {html.escape(symbol)} on Binance">'
             f'{html.escape(symbol)} &#8599;</a>{rank_tag}{manual_buy_link}</span>'
             f'<span class="market-check-status" title="{html.escape(market_status)}">'
             f'{html.escape(market_status)}</span></div>'
