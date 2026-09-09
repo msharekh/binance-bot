@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from entry_conditions import entry_conditions_html
+from watchlist_automation import apply_watchlist_automation, save_config
 
 from advisor import (
     AdvisorError,
@@ -388,6 +389,7 @@ def write_config(
 ):
     temporary_file = CONFIG_FILE.with_suffix(".tmp")
     config = {
+        **read_json(CONFIG_FILE, {}),
         "target_symbols": symbols,
         "max_total_exposure_usdt": str(maximum_exposure),
         "trade_amount_usdt": str(trade_amount),
@@ -404,7 +406,7 @@ def write_config(
 def add_target_symbol(symbol, status):
     config = read_json(CONFIG_FILE, {})
     symbols = list(
-        config.get("target_symbols") or status.get("target_symbols") or []
+        config.get("target_symbols", status.get("target_symbols") or [])
     )
     if symbol in symbols:
         return False
@@ -419,7 +421,7 @@ def add_target_symbol(symbol, status):
 def remove_target_symbol(symbol, status):
     config = read_json(CONFIG_FILE, {})
     symbols = list(
-        config.get("target_symbols") or status.get("target_symbols") or []
+        config.get("target_symbols", status.get("target_symbols") or [])
     )
     if symbol not in symbols:
         return False
@@ -434,7 +436,7 @@ def remove_target_symbol(symbol, status):
 def add_target_symbols(new_symbols, status):
     config = read_json(CONFIG_FILE, {})
     symbols = list(
-        config.get("target_symbols") or status.get("target_symbols") or []
+        config.get("target_symbols", status.get("target_symbols") or [])
     )
     symbols_to_add = [symbol for symbol in new_symbols if symbol not in symbols]
     if not symbols_to_add:
@@ -450,7 +452,7 @@ def add_target_symbols(new_symbols, status):
 def remove_target_symbols(symbols_to_remove, status):
     config = read_json(CONFIG_FILE, {})
     symbols = list(
-        config.get("target_symbols") or status.get("target_symbols") or []
+        config.get("target_symbols", status.get("target_symbols") or [])
     )
     removal_set = set(symbols_to_remove)
     remaining_symbols = [symbol for symbol in symbols if symbol not in removal_set]
@@ -506,7 +508,7 @@ def queue_buy_request(symbol, environment, amount_usdt):
 def render_settings_panel():
     status = read_json(STATUS_FILE, {})
     config = read_json(CONFIG_FILE, {})
-    symbols = config.get("target_symbols") or status.get("target_symbols") or []
+    symbols = config.get("target_symbols", status.get("target_symbols") or [])
     maximum = config.get("max_total_exposure_usdt") or status.get(
         "max_total_exposure_usdt", "75"
     )
@@ -1333,21 +1335,44 @@ def render_position_progress(
         )
 
 
+def save_watchlist_automation_checkbox(setting):
+    config = read_json(CONFIG_FILE, {})
+    config[setting] = bool(st.session_state[setting])
+    config["updated_at"] = int(time.time())
+    save_config(CONFIG_FILE, config)
+
+
+def render_watchlist_automation_checkbox(label, setting, help_text):
+    config = read_json(CONFIG_FILE, {})
+    st.checkbox(
+        label, value=bool(config.get(setting, False)), key=setting,
+        help=help_text, on_change=save_watchlist_automation_checkbox,
+        args=(setting,),
+    )
+
+
 def render_market_suggestions(status):
     suggestions = status.get("suggestions", [])
     config = read_json(CONFIG_FILE, {})
     target_symbols = set(
-        config.get("target_symbols") or status.get("target_symbols", [])
+        config.get("target_symbols", status.get("target_symbols", []))
     )
     selected_count = sum(
         suggestion["symbol"] in target_symbols for suggestion in suggestions
     )
-    with st.expander(
+    title_column, auto_column = st.columns([4, 1])
+    with auto_column:
+        render_watchlist_automation_checkbox(
+            "Auto-add", "auto_add_candidates",
+            "Automatically apply Add all on each check cycle. Adds targets; "
+            "orders still require the bot's entry conditions.",
+        )
+    with title_column.expander(
         f"🟢 Coins to buy ({len(suggestions)}) · Selected: {selected_count}",
         expanded=False,
     ):
         st.caption(
-            "Read-only screen: stablecoins excluded; requires a 1.5% range "
+            "Candidate screen: stablecoins excluded; requires a 1.5% range "
             "and 10M USDT volume, then ranks by range. "
             "This is not a profit guarantee or a buy signal."
         )
@@ -1411,24 +1436,32 @@ def render_market_suggestions(status):
 
 def render_targets_outside_watchlist(status, positions):
     suggestions = status.get("suggestions", [])
-    if not suggestions:
-        return
     config = read_json(CONFIG_FILE, {})
     target_symbols = list(
-        config.get("target_symbols") or status.get("target_symbols") or []
+        config.get("target_symbols", status.get("target_symbols") or [])
     )
     suggestion_symbols = {
         str(suggestion.get("symbol", "")) for suggestion in suggestions
     }
     outside_symbols = [
         symbol for symbol in target_symbols if symbol not in suggestion_symbols
-    ]
-    with st.expander(
+    ] if suggestions else []
+    title_column, auto_column = st.columns([4, 1])
+    with auto_column:
+        render_watchlist_automation_checkbox(
+            "Auto-remove", "auto_remove_avoided",
+            "Automatically apply Remove all on each check cycle. Open "
+            "positions remain monitored until they close.",
+        )
+    with title_column.expander(
         f"🔴 Coins to avoid ({len(outside_symbols)})",
         expanded=False,
     ):
+        if not suggestions:
+            st.info("Waiting for a market screen; no targets will be removed automatically.")
+            return
         st.caption(
-            "Review only: these targets are absent from the current 24-hour "
+            "These targets are absent from the current 24-hour "
             "liquidity/range screen. This is not automatically a sell signal. "
             "Removing a target prevents new entries after the bot's next cycle; "
             "an existing position remains monitored until it closes."
@@ -2796,6 +2829,9 @@ def render_dashboard(open_trades_only=False):
             "trading_enabled": False,
         },
     )
+    # Also apply during live dashboard refreshes, including focused trade view.
+    if time.time() - float(status.get("updated_at", 0)) < 300:
+        apply_watchlist_automation(CONFIG_FILE, status.get("suggestions", []))
     positions = state["positions"]
     live_prices = read_json(LIVE_PRICE_FILE, {})
     if live_prices.get("environment") != status.get("environment"):

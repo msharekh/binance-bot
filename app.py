@@ -12,6 +12,7 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from rich.console import Console
 from entry_conditions import capture_entry_conditions
+from watchlist_automation import apply_watchlist_automation
 
 
 console = Console(highlight=False)
@@ -237,8 +238,6 @@ def load_runtime_config():
         )
         config["poll_seconds"] = max(10, int(saved.get("poll_seconds", POLL_SECONDS)))
         config["live_price_refresh_seconds"] = max(2, int(saved.get("live_price_refresh_seconds", LIVE_PRICE_REFRESH_SECONDS)))
-        if not symbols:
-            raise ValueError("At least one target symbol is required.")
         if maximum_exposure <= 0:
             raise ValueError("Maximum exposure must be greater than zero.")
         if trade_amount <= 0:
@@ -1494,6 +1493,13 @@ def main():
                     suggestions_updated_at = time.time()
                 except Exception as error:
                     print(f"Could not refresh market suggestions: {error}")
+            if time.time() - suggestions_updated_at < SUGGESTION_REFRESH_SECONDS:
+                if apply_watchlist_automation(CONFIG_FILE, suggestions):
+                    runtime_config = load_runtime_config()
+                    target_symbols = runtime_config["target_symbols"]
+                    active_symbols = list(dict.fromkeys(
+                        target_symbols + list(positions.keys())
+                    ))
             print(time.strftime("%Y-%m-%d %H:%M:%S"))
             print(
                 f"Targets: {', '.join(target_symbols)} | "
