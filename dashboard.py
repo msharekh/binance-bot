@@ -157,10 +157,18 @@ st.markdown(
       border:1px solid #1e293b;border-radius:.12rem}
     .position-candle-empty {padding:.55rem;color:#94a3b8;background:#020617;
       border:1px solid #334155;border-radius:.2rem;font-size:.72rem}
-    .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.72rem;
-      margin:.2rem 0 .7rem;border-radius:.75rem;background:rgba(2,6,23,.96);
+    .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.4rem;
+      container-type:inline-size;
+      margin:.15rem 0 .4rem;border-radius:.55rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
-    .summary-grid {display:grid;grid-template-columns:repeat(7,minmax(105px,1fr));gap:.45rem}
+    .summary-grid {display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.25rem}
+    .summary-grid .summary-item {min-width:0;padding:.3rem .4rem}
+    .summary-grid .summary-label {font-size:.65rem;line-height:1.2;
+      text-transform:none;font-weight:650;margin-bottom:.15rem}
+    .summary-grid .summary-value {font-size:1.05rem;line-height:1.15;
+      font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+    .summary-grid .bot-health-card-online {border-width:1px;animation:none;
+      box-shadow:none}
     .secondary-summary-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
       gap:.45rem}
     .summary-item {padding:.42rem .55rem;border-radius:.5rem;background:#0f172a}
@@ -182,7 +190,10 @@ st.markdown(
       inset 0 0 12px rgba(34,197,94,.12)}50%{box-shadow:0 0 20px rgba(34,197,94,.95),
       inset 0 0 18px rgba(34,197,94,.24)}}
     @media(prefers-reduced-motion:reduce){.bot-health-card-online{animation:none}}
-    .summary-tags {margin-top:.45rem}.pnl-positive{color:#4ade80}.pnl-negative{color:#f87171}
+    .summary-tags {display:flex;flex-wrap:wrap;gap:.2rem;margin-top:.3rem}
+    .summary-tags > span {margin:0;padding:.12rem .35rem;font-size:.65rem;
+      line-height:1.3;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+    .pnl-positive{color:#4ade80}.pnl-negative{color:#f87171}
     .hold-banner {padding:.55rem .75rem;margin-bottom:.5rem;border-radius:.5rem;
       background:#7c2d12;color:#ffedd5;border:1px solid #f97316;
       font-size:1.05rem;font-weight:900;text-align:center;letter-spacing:.04em}
@@ -237,9 +248,18 @@ st.markdown(
       box-shadow:0 0 22px currentColor}100%{filter:brightness(1);transform:scale(1);
       box-shadow:none}}
     .market-check-flash {animation:market-cycle-flash 1.15s ease-out}
-    @media(max-width:1200px){.summary-grid{grid-template-columns:repeat(3,1fr)}}
-    @media(max-width:700px){.summary-grid{grid-template-columns:repeat(2,1fr)}
-      .market-check-row{grid-template-columns:1fr}}
+    @container(max-width:1000px){
+      .summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+      .summary-grid .summary-bot-health{display:none}}
+    @container(max-width:600px){
+      .summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .summary-grid .summary-item{padding:.25rem .3rem}
+      .summary-grid .summary-value{font-size:.95rem}
+      .summary-grid .summary-label{font-size:.62rem}
+      .summary-tags > span{font-size:.6rem;padding:.1rem .28rem}}
+    @container(max-width:320px){
+      .summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:700px){.market-check-row{grid-template-columns:1fr}}
     </style>
     """,
     unsafe_allow_html=True,
@@ -533,6 +553,7 @@ def render_settings_panel():
         return config[name] if name in config else status_strategy.get(name, default)
 
     buy_rsi_recovery = float(strategy_value("buy_rsi_recovery", 35))
+    rsi_recovery_window = int(strategy_value("rsi_recovery_window", 1))
     max_support_distance_pct = float(
         strategy_value("max_support_distance_pct", 0.30)
     )
@@ -567,7 +588,7 @@ def render_settings_panel():
             f"{max_open_positions} positions · {interval} · {len(symbols)} targets"
         )
         st.caption(
-            f"Buy: RSI ↑ {buy_rsi_recovery:g} · support ≤ "
+            f"Buy: RSI ↑ {buy_rsi_recovery:g} within {rsi_recovery_window} candle(s), rising · support ≤ "
             f"{max_support_distance_pct:.2f}% · {trend_interval} EMA "
             f"{trend_ema_period} · net TP ≥ {min_net_reward_pct:.2f}% · "
             f"stop ≤ {max_stop_distance_pct:.2f}%"
@@ -607,6 +628,7 @@ def render_settings_panel():
                     interval,
                     {
                         "buy_rsi_recovery": str(buy_rsi_recovery),
+                        "rsi_recovery_window": rsi_recovery_window,
                         "max_support_distance_pct": str(
                             max_support_distance_pct
                         ),
@@ -672,7 +694,7 @@ def render_settings_panel():
                 with live_column:
                     live_price_refresh_seconds_input = st.number_input("Live price seconds", min_value=2, max_value=60, value=live_price_refresh_seconds, step=1)
             with buy_tab:
-                st.caption("All five checks must pass before a new buy.")
+                st.caption("All six checks must pass before a new buy.")
                 rsi_column, support_column = st.columns(2)
                 with rsi_column:
                     buy_rsi_recovery_input = st.number_input(
@@ -682,6 +704,14 @@ def render_settings_panel():
                         value=buy_rsi_recovery,
                         step=1.0,
                         help="RSI must cross upward through this level.",
+                    )
+                    rsi_recovery_window_input = st.number_input(
+                        "RSI recovery window (completed candles)",
+                        min_value=1, max_value=10, value=rsi_recovery_window, step=1,
+                        help="1 requires a cross on the latest closed candle. "
+                        "3 allows a cross within the last three closed candles. "
+                        "The latest RSI must remain above the threshold and be "
+                        "higher than the previous candle's RSI.",
                     )
                 with support_column:
                     max_support_distance_input = st.number_input(
@@ -833,6 +863,7 @@ def render_settings_panel():
                     max_open_positions_input, hold_input, interval_input,
                     {
                         "buy_rsi_recovery": str(buy_rsi_recovery_input),
+                        "rsi_recovery_window": int(rsi_recovery_window_input),
                         "max_support_distance_pct": str(
                             max_support_distance_input
                         ),
@@ -952,7 +983,7 @@ def position_candlestick_chart(
     current_net = (current - entry) - (entry + current) * fee_rate
     if quantity is not None:
         current_net *= quantity
-    now_color = "#34d399" if current_net > 0 else "#fb7185"
+    now_color = "#6effb5" if current_net > 0 else "#ff9aab"
     level_specs = [
         ("TP", take_profit, "#6ee7b7", "4 4"),
         ("Now", current, now_color, ""),
@@ -1090,16 +1121,24 @@ def position_candlestick_chart(
             label_y = label_positions[-1] + 15
         label_positions.append(label_y)
         dash_attribute = f' stroke-dasharray="{dash}"' if dash else ""
+        text_opacity = "1" if label == "Now" else "0.5"
+        line_width = "2" if label == "Now" else "1"
+        connector_width = "1.5" if label == "Now" else "0.8"
+        font_weight = "800" if label == "Now" else "600"
+        glow = (
+            f' style="filter:drop-shadow(0 0 2px {color})"'
+            if label == "Now" else ""
+        )
         chart_parts.extend(
             [
                 f'<line x1="{left}" x2="{left + plot_width}" y1="{true_y:.2f}" '
-                f'y2="{true_y:.2f}" stroke="{color}" stroke-width="1" '
-                f'opacity="0.5"{dash_attribute}/>',
+                f'y2="{true_y:.2f}" stroke="{color}" stroke-width="{line_width}" '
+                f'opacity="{text_opacity}"{dash_attribute}{glow}/>',
                 f'<line x1="{left + plot_width}" x2="{left + plot_width + 6}" '
                 f'y1="{true_y:.2f}" y2="{label_y:.2f}" stroke="{color}" '
-                'stroke-width="0.8" opacity="0.5"/>',
+                f'stroke-width="{connector_width}" opacity="{text_opacity}"{glow}/>',
                 f'<text x="{left + plot_width + 9}" y="{label_y + 4:.2f}" '
-                f'fill="{color}" font-size="11" font-weight="600">'
+                f'fill="{color}" font-size="11" font-weight="{font_weight}" opacity="{text_opacity}"{glow}>'
                 f'{html.escape(f"{label} {smart_number(price)}")}</text>',
             ]
         )
@@ -1107,7 +1146,7 @@ def position_candlestick_chart(
             net_pnl = quantity * (price - entry) - quantity * (entry + price) * fee_rate
             chart_parts.append(
                 f'<text x="{left}" y="{label_y + 4:.2f}" fill="{color}" '
-                f'font-size="11" font-weight="600">'
+                f'font-size="11" font-weight="{font_weight}" opacity="{text_opacity}"{glow}>'
                 f'Est. net {net_pnl:+.2f} USDT</text>'
             )
 
@@ -2007,6 +2046,11 @@ def render_market_check_cards():
         }.get(direction, "live-flat")
         rsi_value = market.get("rsi")
         previous_rsi = market.get("previous_rsi")
+        rsi_history = market.get("rsi_history") or [None, previous_rsi, rsi_value]
+        rsi_history = ([None] * 3 + list(rsi_history))[-3:]
+        rsi_history_text = " &rarr; ".join(
+            html.escape(format_market_number(value, 1)) for value in rsi_history
+        )
         try:
             rsi_change = float(rsi_value) - float(previous_rsi)
         except (TypeError, ValueError):
@@ -2293,6 +2337,10 @@ def render_market_check_cards():
             f'class="{rsi_direction_class}" '
             f'title="{html.escape(previous_rsi_title)}">{rsi_direction_icon} '
             f'{format_market_number(rsi_value, 2)}</span></div></div>'
+            f'<div style="font-size:.65rem;color:#94a3b8;line-height:1.3;'
+            f'margin:.15rem 0;font-variant-numeric:tabular-nums" '
+            f'title="RSI of the last 3 completed candles, oldest to newest">'
+            f'RSI last 3: {rsi_history_text}</div>'
             f'{levels_html}</div>'
         )
     st.markdown(
@@ -2555,6 +2603,12 @@ def render_max_status_strip():
 
 @st.fragment(run_every=5)
 def render_top_bar(show_more_metrics=True):
+    render_watchlist_automation_checkbox(
+        "Ignore weak-market pause", "ignore_weak_market",
+        "When checked, ACTIVE / WEAK does not block automatic buys. "
+        "All other entry conditions, limits, and the manual trading hold still apply. "
+        "When unchecked, the weak-market pause is enforced.",
+    )
     state = read_state()
     status = read_json(STATUS_FILE, {})
     config = read_json(CONFIG_FILE, {})
@@ -2786,12 +2840,12 @@ def render_top_bar(show_more_metrics=True):
           {hold_banner}
           <div class="summary-grid">
             <div class="summary-item"><div class="summary-label">Available USDT</div><div class="summary-value">{available_text}</div></div>
-            <div class="summary-item"><div class="summary-label">Open / max positions</div><div class="summary-value">{len(positions)} / {max_open_positions}</div></div>
+            <div class="summary-item"><div class="summary-label">Positions / max</div><div class="summary-value">{len(positions)} / {max_open_positions}</div></div>
             <div class="summary-item"><div class="summary-label">Exposure / max</div><div class="summary-value">{entry_exposure:,.2f} / {float(maximum):,.2f}</div></div>
-            <div class="summary-item"><div class="summary-label">Today net realized P&amp;L</div><div class="summary-value {today_class}">{today_pnl:+,.4f}</div></div>
-            <div class="summary-item" title="Estimated net P&amp;L after both fees for positions opened today"><div class="summary-label">Today net unrealized P&amp;L</div><div class="summary-value {today_unrealized_class}">{today_unrealized_pnl:+,.4f}</div></div>
+            <div class="summary-item"><div class="summary-label">Today realized (net)</div><div class="summary-value {today_class}">{today_pnl:+,.4f}</div></div>
+            <div class="summary-item" title="Estimated net P&amp;L after both fees for positions opened today"><div class="summary-label">Today unrealized (net)</div><div class="summary-value {today_unrealized_class}">{today_unrealized_pnl:+,.4f}</div></div>
             <div class="summary-item" title="{today_wins} net wins from {today_completed_trades} completed trades today"><div class="summary-label">Today win rate</div><div class="summary-value {today_win_rate_class}">{today_win_rate_text}</div></div>
-            <div class="summary-item {bot_health_card_style}" title="{html.escape(bot_health_detail)}"><div class="summary-label">Bot health</div><div class="summary-value">{html.escape(bot_health)}</div>{bot_health_extra}</div>
+            <div class="summary-item summary-bot-health {bot_health_card_style}" title="{html.escape(bot_health_detail)}"><div class="summary-label">Bot health</div><div class="summary-value">{html.escape(bot_health)}</div>{bot_health_extra}</div>
           </div>
           <div class="summary-tags">{tags}</div>
         </div>

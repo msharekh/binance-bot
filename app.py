@@ -156,8 +156,10 @@ def load_runtime_config():
         "trade_amount_usdt": TRADE_AMOUNT_USDT,
         "max_open_positions": MAX_OPEN_POSITIONS,
         "trading_on_hold": False,
+        "ignore_weak_market": False,
         "interval": INTERVAL,
         "buy_rsi_recovery": DEFAULT_BUY_RSI_RECOVERY,
+        "rsi_recovery_window": 1,
         "max_support_distance_pct": DEFAULT_MAX_SUPPORT_DISTANCE_PCT,
         "trend_interval": DEFAULT_TREND_INTERVAL,
         "trend_ema_period": DEFAULT_TREND_EMA_PERIOD,
@@ -277,8 +279,13 @@ def load_runtime_config():
         config["trade_amount_usdt"] = trade_amount
         config["max_open_positions"] = max_open_positions
         config["trading_on_hold"] = trading_on_hold
+        config["ignore_weak_market"] = bool(saved.get("ignore_weak_market", False))
         config["interval"] = interval
         config["buy_rsi_recovery"] = buy_rsi_recovery
+        recovery_window = int(saved.get("rsi_recovery_window", 1))
+        if not 1 <= recovery_window <= 10:
+            raise ValueError("RSI recovery window must be between 1 and 10 candles.")
+        config["rsi_recovery_window"] = recovery_window
         config["max_support_distance_pct"] = max_support_distance_pct
         config["trend_interval"] = trend_interval
         config["trend_ema_period"] = trend_ema_period
@@ -369,9 +376,13 @@ def analyze_market(client, symbol, interval, strategy):
     ema_21 = completed["close"].ewm(span=21, adjust=False).mean().iloc[-1]
     momentum_ok = bool(ema_9 > ema_21)
     distance_to_support_pct = ((entry_price - support) / entry_price) * 100
+    threshold = float(strategy["buy_rsi_recovery"])
+    recovery_window = int(strategy.get("rsi_recovery_window", 1))
+    upward_crosses = (rsi_series.shift(1) <= threshold) & (rsi_series > threshold)
     rsi_recovered = bool(
-        previous_rsi <= float(strategy["buy_rsi_recovery"])
-        and rsi > float(strategy["buy_rsi_recovery"])
+        upward_crosses.tail(recovery_window).any()
+        and rsi > threshold
+        and rsi > previous_rsi
     )
     near_support = bool(
         distance_to_support_pct <= float(strategy["max_support_distance_pct"])
@@ -403,6 +414,8 @@ def analyze_market(client, symbol, interval, strategy):
         "tp": entry_price + reward_distance,
         "rsi": rsi,
         "previous_rsi": previous_rsi,
+        "rsi_history": [float(value) if pd.notna(value) else None
+                        for value in rsi_series.tail(3)],
         "atr": atr,
         "support": support,
         "resistance": resistance,
@@ -522,6 +535,7 @@ def save_status(
         "market_overview": market_overview,
         "strategy": {
             "buy_rsi_recovery": str(strategy["buy_rsi_recovery"]),
+            "rsi_recovery_window": int(strategy.get("rsi_recovery_window", 1)),
             "max_support_distance_pct": str(
                 strategy["max_support_distance_pct"]
             ),
@@ -550,6 +564,7 @@ def save_status(
                 "suggested_sl": analysis["sl"],
                 "suggested_tp": analysis["tp"],
                 "previous_rsi": analysis["previous_rsi"],
+                "rsi_history": analysis.get("rsi_history", []),
                 "distance_to_support_pct": analysis["distance_to_support_pct"],
                 "trend_interval": analysis["trend_interval"],
                 "trend_ema_period": analysis["trend_ema_period"],
@@ -1290,15 +1305,15 @@ def wait_for_next_cycle(
             )
 
 
-def automatic_buys_paused(market_overview):
+def automatic_buys_paused(market_overview, ignore_weak_market=False):
     regime = str((market_overview or {}).get("regime", "")).strip().upper()
-    return regime == "ACTIVE / WEAK"
+    return regime == "ACTIVE / WEAK" and not ignore_weak_market
 
 
 def decide_and_trade(
     client, symbol, rules, analysis, positions, maximum_exposure, trade_amount,
     max_open_positions, trading_on_hold, last_entry_candle,
-    market_overview=None,
+    market_overview=None, ignore_weak_market=False,
 ):
     position = positions.get(symbol)
     price = Decimal(str(analysis["entry"]))
@@ -1367,7 +1382,7 @@ def decide_and_trade(
         print(f"{symbol} ON HOLD: new buys are paused.")
         return "ON HOLD"
 
-    if automatic_buys_paused(market_overview):
+    if automatic_buys_paused(market_overview, ignore_weak_market):
         print(
             f"{symbol} AUTO BUY PAUSED: market regime is ACTIVE / WEAK. "
             "Manual buying remains available."
@@ -1525,6 +1540,7 @@ def main():
                             client, symbol, rules_by_symbol[symbol], analysis, positions,
                             maximum_exposure, trade_amount, max_open_positions,
                             trading_on_hold, last_entry_candle, market_overview,
+                            ignore_weak_market=runtime_config["ignore_weak_market"],
                         )
                     else:
                         print_status(f"{symbol}: trading disabled.", "yellow")

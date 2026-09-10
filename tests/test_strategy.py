@@ -112,6 +112,31 @@ class StrategySignalTests(unittest.TestCase):
         self.assertFalse(app.automatic_buys_paused({"regime": "ACTIVE / POSITIVE"}))
         self.assertFalse(app.automatic_buys_paused({}))
 
+    @patch("app.buy")
+    def test_weak_market_override_preserves_entry_signal_and_manual_hold(self, buy):
+        args = (
+            None, "TESTUSDT", {}, {"entry": 10, "buy_signal": False}, {},
+            Decimal("120"), Decimal("30"), 4,
+        )
+        weak = {"regime": "ACTIVE / WEAK"}
+        self.assertEqual(
+            app.decide_and_trade(*args, False, {}, weak), "WEAK MARKET PAUSE"
+        )
+        self.assertEqual(
+            app.decide_and_trade(*args, False, {}, weak, ignore_weak_market=True),
+            "WAITING TO BUY",
+        )
+        self.assertEqual(
+            app.decide_and_trade(*args, True, {}, weak, ignore_weak_market=True),
+            "ON HOLD",
+        )
+        buy.assert_not_called()
+
+    def test_weak_market_override_disables_pause(self):
+        self.assertFalse(app.automatic_buys_paused(
+            {"regime": "ACTIVE / WEAK"}, ignore_weak_market=True
+        ))
+
     @patch("app.sell", return_value=True)
     @patch("app.save_positions")
     def test_open_target_tracks_profit_floor_and_preserves_strategy(self, save, sell):
@@ -174,6 +199,30 @@ class StrategySignalTests(unittest.TestCase):
         ):
             self.assertIs(type(analysis[name]), bool)
         json.dumps(analysis)
+
+    @patch("app.calculate_atr")
+    @patch("app.calculate_rsi")
+    def test_rsi_recovery_window_boundaries(self, calculate_rsi, calculate_atr):
+        calculate_atr.side_effect = lambda data: pd.Series([0.5] * len(data))
+        cases = [
+            (1, [32, 36, 38, 40], False),
+            (3, [32, 36, 38, 40], True),
+            (3, [32, 36, 38, 40, 42], False),
+            (3, [32, 36, 40, 38], False),
+            (3, [32, 36, 38, 38], False),
+            (3, [32, 36, 33, 34], False),
+            (3, [32, 36, 33, 35], False),
+            (1, [35, 36], True),
+        ]
+        for window, values, expected in cases:
+            with self.subTest(window=window, values=values):
+                calculate_rsi.side_effect = lambda data: pd.Series(
+                    [40.0] * (len(data) - len(values)) + values
+                )
+                strategy = {**self.strategy, "rsi_recovery_window": window}
+                analysis = app.analyze_market(FakeClient(), "TESTUSDT", "15m", strategy)
+                self.assertEqual(analysis["rsi_recovered"], expected)
+                self.assertEqual(analysis["buy_signal"], expected)
 
     @patch("app.calculate_atr")
     @patch("app.calculate_rsi")
