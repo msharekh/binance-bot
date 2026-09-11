@@ -222,11 +222,11 @@ class StrategySignalTests(unittest.TestCase):
                 strategy = {**self.strategy, "rsi_recovery_window": window}
                 analysis = app.analyze_market(FakeClient(), "TESTUSDT", "15m", strategy)
                 self.assertEqual(analysis["rsi_recovered"], expected)
-                self.assertEqual(analysis["buy_signal"], expected)
+                self.assertTrue(analysis["buy_signal"])
 
     @patch("app.calculate_atr")
     @patch("app.calculate_rsi")
-    def test_one_failed_confirmation_blocks_buy(self, calculate_rsi, calculate_atr):
+    def test_one_failed_confirmation_allows_buy_but_two_block(self, calculate_rsi, calculate_atr):
         calculate_rsi.side_effect = lambda data: pd.Series(
             [40.0] * (len(data) - 2) + [34.0, 36.0]
         )
@@ -236,6 +236,14 @@ class StrategySignalTests(unittest.TestCase):
             FakeClient(support_low=95), "TESTUSDT", "15m", self.strategy
         )
 
+        self.assertFalse(analysis["near_support"])
+        self.assertTrue(analysis["buy_signal"])
+
+        calculate_rsi.side_effect = lambda data: pd.Series([40.0] * len(data))
+        analysis = app.analyze_market(
+            FakeClient(support_low=95), "TESTUSDT", "15m", self.strategy
+        )
+        self.assertFalse(analysis["rsi_recovered"])
         self.assertFalse(analysis["near_support"])
         self.assertFalse(analysis["buy_signal"])
 

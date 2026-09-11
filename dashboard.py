@@ -424,8 +424,8 @@ def summarize_control_changes(previous, current):
         "max_stop_distance_pct": "Maximum stop distance (%)",
         "risk_reward_ratio": "TP reward/risk",
         "sell_rsi_threshold": "RSI exit level",
-        "poll_seconds": "Check interval (seconds)",
-        "live_price_refresh_seconds": "Live price refresh (seconds)",
+        "poll_seconds": "Full analysis pause (seconds)",
+        "live_price_refresh_seconds": "Live price / TP check (seconds)",
         "auto_add_candidates": "Auto-add candidates",
         "auto_remove_avoided": "Auto-remove avoided coins",
         "ignore_weak_market": "Ignore weak-market pause",
@@ -656,6 +656,102 @@ def render_settings_panel():
         if suggestion.get("symbol")
     ]
     symbol_options = list(dict.fromkeys(list(symbols) + suggested_symbols))
+    with st.expander("Control guide — current values, definitions and examples", expanded=False):
+        st.caption(
+            "Values below reflect saved settings (or defaults when unset), not unsaved edits. "
+            "The bot loads saved changes at its next analysis cycle. Examples illustrate rules, not predicted returns."
+        )
+        st.markdown(
+            f"**Live price / TP:** {live_price_refresh_seconds} seconds during the pause. "
+            f"**Full analysis pause:** {poll_seconds} seconds after analysis finishes. "
+            f"**Buy signals and SL:** completed {interval} candles.\n\n"
+            "TP attempts a market sell when a fresh price reaches or exceeds the stored target. "
+            "SL waits for a completed candle at or below the stop. Analysis and network requests "
+            "can delay live checks; the bot must be running and trading enabled. "
+            "A market sale can fill at a different price from its trigger."
+        )
+
+        def guide_table(title, rows):
+            st.markdown(f"**{title}**")
+            st.table([
+                {"Control": name, "Saved value": str(value), "Meaning / example": explanation}
+                for name, value, explanation in rows
+            ])
+
+        guide_table("Timing and capital limits", [
+            ("Live price / TP check", f"{live_price_refresh_seconds}s",
+             f"Refresh prices and check TP during the pause. Example: TP is 105 and a check sees 105.10 → attempt a market sell without waiting for a candle close."),
+            ("Full analysis pause", f"{poll_seconds}s",
+             f"Wait after a full analysis before starting the next one. Example: an analysis taking 8s plus this pause takes about {8 + poll_seconds}s from one start to the next."),
+            ("Trade interval", interval,
+             f"Candle length used for buy indicators and SL. Example: a dip below SL that recovers before the {interval} candle closes does not trigger that candle-close stop."),
+            ("USDT per trade", f"{float(trade_amount):g} USDT",
+             "Maximum amount requested for a new automatic buy. Actual spending depends on available balance, remaining exposure and exchange sizing rules."),
+            ("Total exposure", f"{float(maximum):g} USDT",
+             f"Combined original entry cost allowed across positions. Example: with {float(maximum) / 2:g} USDT already invested, about {float(maximum) / 2:g} USDT of this limit remains. This is not a maximum-loss limit."),
+            ("Max positions", max_open_positions,
+             f"Maximum number of open markets. At {max_open_positions} positions, no new market is opened. Lowering this does not close existing positions."),
+        ])
+        st.caption("Automatic entry requires any 5 of 6 checks. One failed check is allowed, including the stop-distance or minimum-reward filter. Capital limits and buy pauses still apply.")
+        guide_table("Buy filters — at least 5 of 6 must pass", [
+            ("RSI recovery", f"{buy_rsi_recovery:g}",
+             f"RSI (a momentum indicator) must cross upward through {buy_rsi_recovery:g}; the latest RSI must remain above it and keep rising."),
+            ("RSI recovery window", f"{rsi_recovery_window} completed candles",
+             f"How recently that upward cross may have happened. Current window spans {rsi_recovery_window * INTERVAL_MINUTES[interval]} minutes of completed candles; it does not schedule a buy."),
+            ("Support distance %", f"{max_support_distance_pct:g}%",
+             f"Maximum distance above the lowest low of the last 20 completed candles, as a percentage of the closing price. Example: support at 100 allows a close up to approximately {100 / (1 - max_support_distance_pct / 100):.4f}."),
+            ("Trend interval", trend_interval,
+             "Separate candle length for the trend filter. Its completed closing price must be above its EMA. Must be at least as long as the trade interval."),
+            ("EMA period", trend_ema_period,
+             f"EMA is an average weighted toward recent prices. The trend filter uses a {trend_ema_period}-period EMA on {trend_interval} candles."),
+            ("Minimum net TP %", f"{min_net_reward_pct:g}%",
+             f"Minimum estimated percentage reward to the strategy TP after the configured costs. Example: 100 USDT needs at least {min_net_reward_pct:g} USDT estimated net reward to pass this filter."),
+            ("Fees + slippage %", f"{estimated_round_trip_fee_pct:g}%",
+             f"Estimated combined buy/sell cost used in strategy calculations. On 100 USDT, the percentage reward calculation deducts {estimated_round_trip_fee_pct:g} USDT. Actual costs can differ."),
+            ("Maximum stop distance %", f"{max_stop_distance_pct:g}%",
+             f"Skip an automatic buy if the calculated stop is too far below entry. At entry 100, a stop below {100 - max_stop_distance_pct:g} fails this filter. It does not cap the eventual loss."),
+            ("Momentum check (automatic)", "EMA 9 > EMA 21",
+             "The short EMA must be above the longer EMA on completed trade candles. This additional filter has no editable control."),
+        ])
+        guide_table("Sell settings", [
+            ("Stop distance (ATR)", f"{atr_sl_multiplier:g} × ATR",
+             f"ATR measures typical candle movement. Stop distance = ATR × multiplier. Example: entry 100 and ATR 1 gives SL {100 - atr_sl_multiplier:g}. SL uses a completed candle close."),
+            ("TP reward/risk", f"{risk_reward_ratio:g}R",
+             f"Strategy TP distance is stop distance × this ratio. Example: entry 100 and stop distance 1 gives TP {100 + risk_reward_ratio:g}, before any minimum-profit adjustment."),
+            ("RSI exit level", f"{sell_rsi_threshold:g}",
+             f"Completed-candle RSI at or above {sell_rsi_threshold:g} can trigger an indicator exit, provided the estimated minimum net profit is met."),
+            ("Minimum net profit", f"{min_net_profit_usdt:g} USDT",
+             "Profit floor after estimated fees for an RSI exit; it can also raise the automatic TP target. SL and manual sells can exit below this floor. A manually set TP overrides the automatic TP target."),
+        ])
+        st.caption(
+            "Changing ATR or reward/risk settings applies to future positions. Existing positions keep their stored stop and strategy target; "
+            "the automatic TP may adjust to the minimum-profit floor. Changing the trade interval affects the next candle analysis, including SL."
+        )
+        guide_table("Targets and automation", [
+            ("Target symbols", f"{len(symbols)} selected",
+             "Markets considered for new entries. Removing a market does not sell its position; open positions remain monitored."),
+            ("Quick add target", "One complete USDT symbol",
+             "Example: enter BTCUSDT and press Add to save it to targets immediately. This does not place a buy."),
+            ("Pause new buys", "On" if trading_on_hold else "Off",
+             "Pauses new buys, including dashboard manual buy requests. Existing positions remain eligible for exits."),
+            ("Auto-add candidates", "On" if config.get("auto_add_candidates", False) else "Off",
+             "Automatically adds qualifying suggested candidates to targets. Adding a target does not bypass entry checks."),
+            ("Auto-remove avoided coins", "On" if config.get("auto_remove_avoided", False) else "Off",
+             "Removes targets absent from the latest nonempty candidate list. It does not automatically sell existing holdings."),
+            ("Ignore weak-market pause", "On" if config.get("ignore_weak_market", False) else "Off",
+             "Allows automatic entry consideration in ACTIVE / WEAK market conditions. Other entry checks and the Pause new buys control still apply."),
+        ])
+        st.write("Saved target symbols: " + ", ".join(symbols))
+        guide_table("Saving and manual actions", [
+            ("Save all controls", "Applies the settings form",
+             "Edits in Limits, Buy, Sell and Targets are saved together. The bot reads them next cycle. Automation checkboxes save immediately."),
+            ("Manual buy", "Amount shown in the buy panel",
+             "Queues a buy for the selected target; it can add to an existing position. Capital, balance and exchange constraints still apply. It is not an automatic entry signal."),
+            ("Confirm market sell", "Position selected in its card",
+             "Queues an immediate market-sale request for that tracked position. It does not wait for TP, SL or the profit floor. Requests expire after 30 seconds."),
+            ("Sell at price / Set sell price", "Current target shown in each position card",
+             "Replaces that position's bot-managed TP trigger. Example: set 105 → a live check at 105 or above attempts a market sell. This is not a resting Binance limit order."),
+        ])
     with st.expander("⚙️ Trading controls", expanded=False):
         saved_notice = st.session_state.pop("trading_controls_notice", None)
         if saved_notice:
@@ -692,7 +788,7 @@ def render_settings_panel():
 
         if quick_add_confirmed:
             normalized_symbol = quick_symbol.strip().upper()
-            if not re.fullmatch(r"[A-Z0-9]+USDT", normalized_symbol):
+            if not re.fullmatch(r"[^\W_]+USDT", normalized_symbol):
                 st.error("Enter a complete USDT symbol, for example DEXEUSDT.")
             elif normalized_symbol in symbols:
                 st.info(f"{normalized_symbol} is already selected.")
@@ -768,11 +864,11 @@ def render_settings_panel():
                     )
                 speed_column, live_column = st.columns(2)
                 with speed_column:
-                    poll_seconds_input = st.number_input("Full check seconds", min_value=10, max_value=300, value=poll_seconds, step=5)
+                    poll_seconds_input = st.number_input("Full analysis pause (seconds)", min_value=10, max_value=300, value=poll_seconds, step=5, help="Wait between full market analyses. Buy signals and stop-loss use completed candles.")
                 with live_column:
-                    live_price_refresh_seconds_input = st.number_input("Live price seconds", min_value=2, max_value=60, value=live_price_refresh_seconds, step=1)
+                    live_price_refresh_seconds_input = st.number_input("Live price / TP check (seconds)", min_value=2, max_value=60, value=live_price_refresh_seconds, step=1, help="Refresh live prices and check take-profit during the analysis pause. Analysis and network work can delay checks.")
             with buy_tab:
-                st.caption("All six checks must pass before a new buy.")
+                st.caption("At least 5 of 6 checks must pass before a new buy. One failed check is allowed, including risk or reward.")
                 rsi_column, support_column = st.columns(2)
                 with rsi_column:
                     buy_rsi_recovery_input = st.number_input(
@@ -919,7 +1015,7 @@ def render_settings_panel():
             invalid = [
                 symbol
                 for symbol in parsed_symbols
-                if not re.fullmatch(r"[A-Z0-9]+USDT", symbol)
+                if not re.fullmatch(r"[^\W_]+USDT", symbol)
             ]
             # Keep unrelated settings saveable when an obsolete/bad symbol is
             # already present in the persisted target list.
@@ -1262,7 +1358,7 @@ def condition_percentages_html(market, config, position=None):
     passed = sum(bool(market.get(key)) for key in checks)
     buy_text = f"{passed / len(checks) * 100:.0f}%" if known else "N/A"
     buy_detail = (
-        f"{passed}/6 entry checks met. Market pause, trading hold, limits and "
+        f"{passed}/6 entry checks met; at least 5 required. Market pause, trading hold, limits and "
         "candle cooldown still apply. This is not a probability."
     ) if known else "Waiting for all six entry checks."
     sell_text = "N/A"

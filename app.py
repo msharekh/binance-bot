@@ -400,14 +400,10 @@ def analyze_market(client, symbol, interval, strategy):
             )
         )
     )
-    buy_signal = bool(
-        rsi_recovered
-        and near_support
-        and trend_ok
-        and reward_ok
-        and stop_risk_ok
-        and momentum_ok
-    )
+    buy_signal = sum(bool(check) for check in (
+        rsi_recovered, near_support, trend_ok, reward_ok,
+        stop_risk_ok, momentum_ok,
+    )) >= 5
     return {
         "entry": entry_price,
         "signal_candle_close_time": signal_candle_close_time,
@@ -508,7 +504,20 @@ def save_entry_cooldowns(last_entry_candle):
     }
     with temporary_file.open("w", encoding="utf-8") as cooldown_file:
         json.dump(state, cooldown_file, indent=2)
-    temporary_file.replace(ENTRY_COOLDOWN_FILE)
+    # Windows readers/antivirus can briefly prevent an atomic replacement.
+    # Keep the old file intact and retry; never truncate it as a fallback.
+    for attempt in range(10):
+        try:
+            temporary_file.replace(ENTRY_COOLDOWN_FILE)
+            return
+        except PermissionError as error:
+            if attempt == 9:
+                raise PermissionError(
+                    f"Could not save {ENTRY_COOLDOWN_FILE} after retrying for "
+                    "4.5 seconds. Check file permissions or a program holding "
+                    "the file open. The previous cooldown file was preserved."
+                ) from error
+            time.sleep(0.5)
 
 
 def save_status(
@@ -686,12 +695,12 @@ def refresh_live_prices(client, symbols):
             json.dump(payload, live_file, indent=2)
     except OSError as error:
         print(f"Could not write live-price update: {error}")
-        return
+        return ticker_prices
 
     for attempt in range(6):
         try:
             temporary_file.replace(LIVE_PRICE_FILE)
-            return
+            return ticker_prices
         except PermissionError as error:
             if attempt == 5:
                 print(
@@ -699,11 +708,11 @@ def refresh_live_prices(client, symbols):
                     f"and trying again in {LIVE_PRICE_REFRESH_SECONDS} seconds: "
                     f"{error}"
                 )
-                return
+                return ticker_prices
             time.sleep(0.05 * (attempt + 1))
         except OSError as error:
             print(f"Could not publish live-price update: {error}")
-            return
+            return ticker_prices
 
 
 def record_transaction(transaction):
@@ -1288,17 +1297,51 @@ def process_buy_requests(client, positions, rules_by_symbol, runtime_config):
             print(f"{symbol} manual BUY error: {error}")
 
 
+def check_live_take_profits(client, positions, rules_by_symbol, prices):
+    """Use fresh ticker prices for TP only; SL remains candle-close based."""
+    if not TRADING_ENABLED or not prices:
+        return
+    for symbol, position in list(positions.items()):
+        try:
+            if symbol not in prices:
+                continue
+            price = Decimal(str(prices[symbol]))
+            target = Decimal(str(position["take_profit"]))
+            if not price.is_finite() or not target.is_finite():
+                continue
+            if price <= 0 or target <= 0 or price < target:
+                continue
+            if symbol not in rules_by_symbol:
+                rules_by_symbol[symbol] = get_market_rules(client, symbol)
+            sell(
+                client, symbol, rules_by_symbol[symbol], position,
+                {"entry": price}, positions, "take profit",
+            )
+        except Exception as error:
+            print(f"{symbol} live take-profit error: {error}")
+
+
 def wait_for_next_cycle(
     client, positions, rules_by_symbol, active_symbols, runtime_config,
 ):
     poll_seconds = max(10, int(runtime_config.get("poll_seconds", POLL_SECONDS)))
     live_refresh = max(2, int(runtime_config.get("live_price_refresh_seconds", LIVE_PRICE_REFRESH_SECONDS)))
-    elapsed = 0
-    while elapsed < poll_seconds:
-        time.sleep(min(2, poll_seconds - elapsed))
-        elapsed += 2
-        if elapsed < poll_seconds and elapsed % live_refresh == 0:
-            refresh_live_prices(client, active_symbols)
+    deadline = time.monotonic() + poll_seconds
+    next_refresh = time.monotonic() + live_refresh
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        time.sleep(min(2, deadline - now, max(0, next_refresh - now)))
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        if now >= next_refresh:
+            prices = refresh_live_prices(
+                client, list(dict.fromkeys(active_symbols + list(positions)))
+            )
+            check_live_take_profits(client, positions, rules_by_symbol, prices)
+            next_refresh = time.monotonic() + live_refresh
         if TRADING_ENABLED:
             process_sell_requests(client, positions, rules_by_symbol)
             process_buy_requests(
@@ -1484,7 +1527,8 @@ def main():
             active_symbols = list(
                 dict.fromkeys(target_symbols + list(positions.keys()))
             )
-            refresh_live_prices(client, active_symbols)
+            prices = refresh_live_prices(client, active_symbols)
+            check_live_take_profits(client, positions, rules_by_symbol, prices)
             if time.time() - suggestions_updated_at >= SUGGESTION_REFRESH_SECONDS:
                 try:
                     suggestions, market_overview = get_market_suggestions(

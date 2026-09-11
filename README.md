@@ -316,6 +316,13 @@ Changing the candle interval affects the next market analysis and future entry
 signals. It does not recalculate the entry, stop loss, or take profit already
 stored for an open position.
 
+Take-profit also checks fresh ticker prices on live-price refreshes (every two
+seconds by default) and at the start of each analysis cycle. Reaching or exceeding
+the stored TP submits a market sell when trading is enabled. Stop-loss and entry
+signals still use completed candles. Checks run in the bot loop, so analysis and
+network delays can increase the time between checks; market fills may differ from
+the target price. Failed ticker refreshes do not trigger a sale from cached prices.
+
 Changing the ATR stop multiplier or reward/risk ratio also applies only to
 future positions. The RSI sell threshold is evaluated for all monitored open
 positions on the next completed-candle analysis. The fee percentage is an
