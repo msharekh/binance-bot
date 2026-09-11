@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 import math
 import msvcrt
 import os
@@ -1365,37 +1366,23 @@ def decide_and_trade(
                 "min_net_profit_usdt", DEFAULT_MIN_NET_PROFIT_USDT
             )))
             if estimated_net_profit < minimum_net_profit:
-                print(
-                    f"{symbol} HOLD: RSI exit waiting for estimated net profit "
-                    f"of {minimum_net_profit:.2f} USDT."
-                )
                 return "WAITING FOR MIN NET PROFIT"
             order = sell(
                 client, symbol, rules, position, analysis, positions, "RSI sell signal"
             )
             return "SELL FILLED" if order else "SELL SKIPPED"
         else:
-            print(f"{symbol} HOLD: open position is being monitored.")
             return "MONITORING"
 
     if trading_on_hold:
-        print(f"{symbol} ON HOLD: new buys are paused.")
         return "ON HOLD"
 
     if automatic_buys_paused(market_overview, ignore_weak_market):
-        print(
-            f"{symbol} AUTO BUY PAUSED: market regime is ACTIVE / WEAK. "
-            "Manual buying remains available."
-        )
         return "WEAK MARKET PAUSE"
 
     if analysis["buy_signal"]:
         signal_candle = int(analysis["signal_candle_close_time"])
         if last_entry_candle.get(symbol) == signal_candle:
-            print(
-                f"{symbol} BUY skipped: this completed candle's signal was "
-                "already used."
-            )
             return "WAITING FOR NEW CANDLE"
         position = buy(
             client, symbol, rules, analysis, positions, maximum_exposure,
@@ -1406,7 +1393,6 @@ def decide_and_trade(
             save_entry_cooldowns(last_entry_candle)
         return "BUY FILLED" if position else "BUY SKIPPED"
     else:
-        print(f"{symbol} NO TRADE: waiting for a buy signal.")
         return "WAITING TO BUY"
 
 
@@ -1472,6 +1458,7 @@ def main():
     suggestions = []
     market_overview = {}
     suggestions_updated_at = 0
+    previous_market_state = None
     mode = f"{ENVIRONMENT.upper()} TRADING" if TRADING_ENABLED else "ANALYSIS ONLY"
     mode_style = "bold green" if TRADING_ENABLED else "bold yellow"
     console.print(
@@ -1515,15 +1502,16 @@ def main():
                     active_symbols = list(dict.fromkeys(
                         target_symbols + list(positions.keys())
                     ))
-            print(time.strftime("%Y-%m-%d %H:%M:%S"))
-            print(
-                f"Targets: {', '.join(target_symbols)} | "
-                f"Trade amount: {trade_amount} USDT | "
-                f"Max exposure: {maximum_exposure} USDT | "
-                f"Max positions: {max_open_positions} | "
-                f"Interval: {interval} | "
-                f"New buys: {'ON HOLD' if trading_on_hold else 'ACTIVE'}"
+            market_state = (
+                market_overview.get("regime", "UNKNOWN"), trading_on_hold,
+                runtime_config["ignore_weak_market"],
             )
+            if market_state != previous_market_state:
+                print_status(
+                    f"Market: {market_state[0]} | Hold: {trading_on_hold} | "
+                    f"Ignore weak market: {market_state[2]}", "cyan"
+                )
+                previous_market_state = market_state
             analyses = {}
             market_statuses = {}
             for symbol in active_symbols:
@@ -1534,7 +1522,6 @@ def main():
                         client, symbol, interval, runtime_config
                     )
                     analyses[symbol] = analysis
-                    print_report(symbol, analysis)
                     if TRADING_ENABLED:
                         market_statuses[symbol] = decide_and_trade(
                             client, symbol, rules_by_symbol[symbol], analysis, positions,
@@ -1543,7 +1530,6 @@ def main():
                             ignore_weak_market=runtime_config["ignore_weak_market"],
                         )
                     else:
-                        print_status(f"{symbol}: trading disabled.", "yellow")
                         market_statuses[symbol] = "ANALYSIS ONLY"
                 except (BinanceAPIException, BinanceOrderException) as error:
                     print_status(f"{symbol} Binance error: {error}", "bold red")
@@ -1564,6 +1550,14 @@ def main():
                 )
             except Exception as error:
                 print_status(f"Could not update account status: {error}", "bold red")
+            counts = Counter(market_statuses.values())
+            outcomes = ", ".join(f"{name}: {count}" for name, count in sorted(counts.items()))
+            print_status(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} | "
+                f"Checked {len(analyses)}/{len(active_symbols)} | "
+                f"Open {len(positions)}/{max_open_positions} | {outcomes}",
+                "cyan",
+            )
             wait_for_next_cycle(
                 client, positions, rules_by_symbol, active_symbols,
                 runtime_config,

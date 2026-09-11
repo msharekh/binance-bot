@@ -32,6 +32,7 @@ TRANSACTION_FILE = PROJECT_DIR / "transactions.jsonl"
 STATUS_FILE = PROJECT_DIR / "bot_status.json"
 LIVE_PRICE_FILE = PROJECT_DIR / "live_prices.json"
 CONFIG_FILE = PROJECT_DIR / "bot_config.json"
+CONTROL_CHANGE_LOG = PROJECT_DIR / "control_changes.jsonl"
 SELL_REQUEST_FILE = PROJECT_DIR / "sell_requests.jsonl"
 BUY_REQUEST_FILE = PROJECT_DIR / "buy_requests.jsonl"
 MARKET_OVERVIEW_HISTORY_FILE = PROJECT_DIR / "market_overview_history.jsonl"
@@ -403,13 +404,89 @@ def notify_new_transaction(transactions):
     play_action_sound(latest)
 
 
+def summarize_control_changes(previous, current):
+    labels = {
+        "target_symbols": "Targets",
+        "max_total_exposure_usdt": "Max exposure (USDT)",
+        "trade_amount_usdt": "USDT per trade",
+        "max_open_positions": "Max positions",
+        "trading_on_hold": "Hold new buys",
+        "interval": "Candle interval",
+        "buy_rsi_recovery": "RSI recovery threshold",
+        "rsi_recovery_window": "RSI recovery window (candles)",
+        "max_support_distance_pct": "Support distance (%)",
+        "trend_interval": "Trend interval",
+        "trend_ema_period": "Trend EMA period",
+        "min_net_reward_pct": "Minimum net reward (%)",
+        "min_net_profit_usdt": "Minimum net profit (USDT)",
+        "estimated_round_trip_fee_pct": "Round-trip fees (%)",
+        "atr_sl_multiplier": "Stop distance (ATR)",
+        "max_stop_distance_pct": "Maximum stop distance (%)",
+        "risk_reward_ratio": "TP reward/risk",
+        "sell_rsi_threshold": "RSI exit level",
+        "poll_seconds": "Check interval (seconds)",
+        "live_price_refresh_seconds": "Live price refresh (seconds)",
+        "auto_add_candidates": "Auto-add candidates",
+        "auto_remove_avoided": "Auto-remove avoided coins",
+        "ignore_weak_market": "Ignore weak-market pause",
+    }
+
+    def display(value):
+        if value is None:
+            return "Not set"
+        if isinstance(value, bool):
+            return "On" if value else "Off"
+        try:
+            return f"{float(value):g}"
+        except (ValueError, TypeError):
+            return str(value)
+
+    changes = []
+    for key, label in labels.items():
+        old, new = previous.get(key), current.get(key)
+        if key == "target_symbols":
+            added = sorted(set(new or []) - set(old or []))
+            removed = sorted(set(old or []) - set(new or []))
+            if added:
+                changes.append("Targets added: " + ", ".join(added))
+            if removed:
+                changes.append("Targets removed: " + ", ".join(removed))
+        elif display(old) != display(new):
+            changes.append(f"{label}: {display(old)} → {display(new)}")
+    return changes
+
+
+def log_control_changes(previous, current):
+    summary = summarize_control_changes(previous, current)
+    if not summary:
+        return summary
+    changes = {}
+    for key in current.keys() | previous.keys():
+        if summarize_control_changes({key: previous.get(key)}, {key: current.get(key)}):
+            changes[key] = {"old": previous.get(key), "new": current.get(key)}
+    record = {
+        "recorded_at": int(time.time()),
+        "saved_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "event": "controls_changed",
+        "changes": changes,
+        "summary": summary,
+    }
+    try:
+        with CONTROL_CHANGE_LOG.open("a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as error:
+        st.warning(f"Settings saved, but the change log could not be written: {error}")
+    return summary
+
+
 def write_config(
     symbols, maximum_exposure, trade_amount, max_open_positions,
     trading_on_hold, interval, strategy,
 ):
     temporary_file = CONFIG_FILE.with_suffix(".tmp")
+    previous = read_json(CONFIG_FILE, {})
     config = {
-        **read_json(CONFIG_FILE, {}),
+        **previous,
         "target_symbols": symbols,
         "max_total_exposure_usdt": str(maximum_exposure),
         "trade_amount_usdt": str(trade_amount),
@@ -421,6 +498,7 @@ def write_config(
     }
     temporary_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
     temporary_file.replace(CONFIG_FILE)
+    return log_control_changes(previous, config)
 
 
 def add_target_symbol(symbol, status):
@@ -858,7 +936,7 @@ def render_settings_panel():
             else:
                 if invalid:
                     st.warning("Removed invalid USDT symbols: " + ", ".join(invalid))
-                write_config(
+                changes = write_config(
                     parsed_symbols, maximum_input, trade_amount_input,
                     max_open_positions_input, hold_input, interval_input,
                     {
@@ -882,9 +960,13 @@ def render_settings_panel():
                         "live_price_refresh_seconds": int(live_price_refresh_seconds_input),
                     },
                 )
-                st.success(
-                    "Settings saved. The bot will load them at the next analysis cycle."
+                st.session_state["controls_change_summary"] = (
+                    "Saved changes:\n\n" + "\n\n".join(changes)
+                    + "\n\nThe bot will load these settings at the next analysis cycle."
+                    if changes else "Saved — no settings changed."
                 )
+        if st.session_state.get("controls_change_summary"):
+            st.success(st.session_state["controls_change_summary"])
 
 
 def transaction_frame(transactions):
@@ -1173,6 +1255,56 @@ def position_candlestick_chart(
     )
 
 
+def condition_percentages_html(market, config, position=None):
+    checks = ("rsi_recovered", "near_support", "trend_ok", "reward_ok",
+              "stop_risk_ok", "momentum_ok")
+    known = all(market.get(key) is not None for key in checks)
+    passed = sum(bool(market.get(key)) for key in checks)
+    buy_text = f"{passed / len(checks) * 100:.0f}%" if known else "N/A"
+    buy_detail = (
+        f"{passed}/6 entry checks met. Market pause, trading hold, limits and "
+        "candle cooldown still apply. This is not a probability."
+    ) if known else "Waiting for all six entry checks."
+    sell_text = "N/A"
+    sell_detail = "No open position to evaluate."
+    if position:
+        sell_detail = "Waiting for current price and RSI."
+        try:
+            price = float(market["price"])
+            entry = float(position["entry"])
+            sl = float(position["stop_loss"])
+            tp = float(position["take_profit"])
+            quantity = float(position["quantity"])
+            rsi = float(market["rsi"])
+            threshold = float(config.get("sell_rsi_threshold", 65))
+            fee = float(config.get("estimated_round_trip_fee_pct", .2)) / 200
+            net = quantity * ((price - entry) - (entry + price) * fee)
+            minimum = float(config.get("min_net_profit_usdt", .5))
+            clamp = lambda value: max(0.0, min(1.0, value))
+            tp_progress = clamp((price - entry) / (tp - entry)) if tp > entry else 0
+            sl_progress = clamp((entry - price) / (entry - sl)) if entry > sl else 0
+            rsi_progress = min(clamp(rsi / threshold), clamp(net / minimum))
+            ready = price <= sl or price >= tp or (rsi >= threshold and net >= minimum)
+            progress = max(tp_progress, sl_progress, rsi_progress)
+            sell_text = "100%" if ready else f"{min(99, round(progress * 100))}%"
+            sell_detail = (
+                f"Exit progress: TP {tp_progress:.0%}, SL {sl_progress:.0%}, "
+                f"RSI plus minimum net profit {rsi_progress:.0%}. "
+                "Shows the highest of these independent exit paths, not a probability "
+                "or a prediction of when an order will fill."
+            )
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            pass
+    return (
+        '<div style="display:flex;flex-wrap:wrap;gap:.65rem;font-size:.7rem;'
+        'font-weight:700;margin:.2rem 0">'
+        f'<span style="color:#86efac" title="{html.escape(buy_detail, quote=True)}">'
+        f'Buy checks: {buy_text}</span>'
+        f'<span style="color:#fdba74" title="{html.escape(sell_detail, quote=True)}">'
+        f'Sell progress: {sell_text}</span></div>'
+    )
+
+
 def render_position_progress(
     symbol, position, current_price, trading_enabled, environment,
     live_market=None, max_view=False,
@@ -1213,6 +1345,11 @@ def render_position_progress(
         if fee_rate < 1 else entry
     )
     live_market = live_market or {}
+    st.markdown(
+        condition_percentages_html(
+            {**live_market, "price": current}, runtime_config, position
+        ), unsafe_allow_html=True,
+    )
     last_progress_at = live_market.get("last_progress_at")
     interval_minutes = INTERVAL_MINUTES.get(
         runtime_config.get("interval", "5m"), 5
@@ -1237,6 +1374,20 @@ def render_position_progress(
         distance = max(((current - stop_loss) / current) * 100, 0)
 
     st.markdown(entry_conditions_html(position, live_market), unsafe_allow_html=True)
+    rsi_history = live_market.get("rsi_history") or [
+        None, live_market.get("previous_rsi"), live_market.get("rsi")
+    ]
+    rsi_history = ([None] * 3 + list(rsi_history))[-3:]
+    rsi_history_text = " &rarr; ".join(
+        html.escape(format_market_number(value, 1)) for value in rsi_history
+    )
+    st.markdown(
+        '<div style="font-size:.65rem;color:#94a3b8;line-height:1.3;'
+        'margin:.15rem 0;font-variant-numeric:tabular-nums" '
+        'title="RSI of the last 3 completed candles, oldest to newest">'
+        f'RSI last 3: {rsi_history_text}</div>',
+        unsafe_allow_html=True,
+    )
     symbol_column, profit_column, action_column = st.columns([2, 2, 1])
     with symbol_column:
         st.markdown(
@@ -1376,9 +1527,11 @@ def render_position_progress(
 
 def save_watchlist_automation_checkbox(setting):
     config = read_json(CONFIG_FILE, {})
+    previous = dict(config)
     config[setting] = bool(st.session_state[setting])
     config["updated_at"] = int(time.time())
     save_config(CONFIG_FILE, config)
+    log_control_changes(previous, config)
 
 
 def render_watchlist_automation_checkbox(label, setting, help_text):
@@ -1396,9 +1549,11 @@ def render_market_suggestions(status):
     target_symbols = set(
         config.get("target_symbols", status.get("target_symbols", []))
     )
-    selected_count = sum(
-        suggestion["symbol"] in target_symbols for suggestion in suggestions
-    )
+    candidate_symbols = [
+        suggestion["symbol"]
+        for suggestion in suggestions
+        if suggestion["symbol"] not in target_symbols
+    ]
     title_column, auto_column = st.columns([4, 1])
     with auto_column:
         render_watchlist_automation_checkbox(
@@ -1407,7 +1562,7 @@ def render_market_suggestions(status):
             "orders still require the bot's entry conditions.",
         )
     with title_column.expander(
-        f"🟢 Coins to buy ({len(suggestions)}) · Selected: {selected_count}",
+        f"🟢 Coins to buy ({len(candidate_symbols)})",
         expanded=False,
     ):
         st.caption(
@@ -1415,11 +1570,6 @@ def render_market_suggestions(status):
             "and 10M USDT volume, then ranks by range. "
             "This is not a profit guarantee or a buy signal."
         )
-        candidate_symbols = [
-            suggestion["symbol"]
-            for suggestion in suggestions
-            if suggestion["symbol"] not in target_symbols
-        ]
         if st.button(
             "Add all",
             key="watchlist_add_all",
@@ -2341,6 +2491,7 @@ def render_market_check_cards():
             f'margin:.15rem 0;font-variant-numeric:tabular-nums" '
             f'title="RSI of the last 3 completed candles, oldest to newest">'
             f'RSI last 3: {rsi_history_text}</div>'
+            f'{condition_percentages_html({**market, "price": display_price}, config, state.get("positions", {}).get(symbol))}'
             f'{levels_html}</div>'
         )
     st.markdown(
@@ -2912,7 +3063,9 @@ def render_dashboard(open_trades_only=False):
         focused_symbol = st.session_state.get("focused_position_symbol") if open_trades_only else None
         if focused_symbol in positions:
             position_items = [(focused_symbol, positions[focused_symbol])]
-        cards_per_row = 1 if focused_symbol else (3 if open_trades_only else 2)
+        cards_per_row = 1 if focused_symbol else (
+            int(st.session_state.get("max_cards_per_row", 3)) if open_trades_only else 2
+        )
         for start in range(0, len(position_items), cards_per_row):
             row_items = position_items[start : start + cards_per_row]
             columns = st.columns(cards_per_row, gap="small")
@@ -3077,6 +3230,15 @@ if open_trades_only:
  
 if open_trades_only:
     render_max_status_strip()
+    def update_max_cards_per_row():
+        st.session_state["max_cards_per_row"] = st.session_state["max_cards_per_row_input"]
+        st.session_state.pop("focused_position_symbol", None)
+
+    st.radio(
+        "Cards per row", options=[1, 2, 3, 4], horizontal=True,
+        index=int(st.session_state.get("max_cards_per_row", 3)) - 1,
+        key="max_cards_per_row_input", on_change=update_max_cards_per_row,
+    )
     if st.session_state.get("focused_position_symbol"):
         if st.button("↩ Show all open positions", key="focused_position_back"):
             st.session_state.pop("focused_position_symbol", None)
