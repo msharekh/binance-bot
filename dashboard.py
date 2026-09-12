@@ -158,16 +158,18 @@ st.markdown(
       border:1px solid #1e293b;border-radius:.12rem}
     .position-candle-empty {padding:.55rem;color:#94a3b8;background:#020617;
       border:1px solid #334155;border-radius:.2rem;font-size:.72rem}
-    .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.4rem;
+    .sticky-summary {position:sticky;top:2.8rem;z-index:999;padding:.25rem;
       container-type:inline-size;
       margin:.15rem 0 .4rem;border-radius:.55rem;background:rgba(2,6,23,.96);
       border:1px solid #334155;box-shadow:0 8px 24px rgba(0,0,0,.28)}
-    .summary-grid {display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.25rem}
-    .summary-grid .summary-item {min-width:0;padding:.3rem .4rem}
+    .summary-grid {display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:.2rem}
+    .summary-grid .summary-item {min-width:0;padding:.25rem .35rem;border-radius:.3rem}
+    .summary-grid .summary-bot-health {display:none}
     .summary-grid .summary-label {font-size:.65rem;line-height:1.2;
       text-transform:none;font-weight:650;margin-bottom:.15rem}
-    .summary-grid .summary-value {font-size:1.05rem;line-height:1.15;
-      font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+    .summary-grid .summary-value {font-size:.95rem;line-height:1.15;
+      font-variant-numeric:tabular-nums;white-space:nowrap}
+    .summary-grid .summary-item:nth-child(3) .summary-value {font-size:.85rem}
     .summary-grid .bot-health-card-online {border-width:1px;animation:none;
       box-shadow:none}
     .secondary-summary-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
@@ -238,9 +240,12 @@ st.markdown(
       text-transform:none;font-weight:800}
     .market-check-levels {margin-top:.15rem;color:#cbd5e1;font-size:.65rem}
     .market-check-levels summary {cursor:pointer;font-weight:800;color:#94a3b8}
+    .market-check-levels .condition-full-title {display:none}
+    .market-check-levels[open] .condition-full-title {display:inline}
+    .market-check-levels[open] .condition-initial {display:none}
     .market-check-levels .market-check-grid {margin-top:.2rem}
-    .market-condition-details {display:flex;flex-wrap:wrap;gap:3px 8px;margin-top:5px}
-    .market-condition-details .market-check-levels {flex:1 1 28%;margin:0}
+    .market-condition-details {display:flex;flex-wrap:wrap;gap:3px 4px;margin-top:5px}
+    .market-condition-details .market-check-levels {flex:1 0 auto;margin:0}
     .market-condition-details .market-check-levels summary {font-size:.62rem;white-space:nowrap}
     .market-condition-details .market-check-levels[open] {flex-basis:100%;padding:4px 0}
     .live-up {color:#4ade80!important}.live-down {color:#f87171!important}
@@ -249,16 +254,15 @@ st.markdown(
       box-shadow:0 0 22px currentColor}100%{filter:brightness(1);transform:scale(1);
       box-shadow:none}}
     .market-check-flash {animation:market-cycle-flash 1.15s ease-out}
-    @container(max-width:1000px){
-      .summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
-      .summary-grid .summary-bot-health{display:none}}
+    @container(max-width:850px){
+      .summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
     @container(max-width:600px){
       .summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
       .summary-grid .summary-item{padding:.25rem .3rem}
       .summary-grid .summary-value{font-size:.95rem}
       .summary-grid .summary-label{font-size:.62rem}
       .summary-tags > span{font-size:.6rem;padding:.1rem .28rem}}
-    @container(max-width:320px){
+    @container(max-width:420px){
       .summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:700px){.market-check-row{grid-template-columns:1fr}}
     </style>
@@ -2127,17 +2131,10 @@ def render_market_check_cards():
         trading_mode = (
             "TRADING ACTIVE" if status.get("trading_enabled") else "ANALYSIS ONLY"
         )
-        live_updated_at = live_prices.get("updated_at")
-        live_label = "waiting"
-        if live_updated_at:
-            live_label = datetime.fromtimestamp(live_updated_at).astimezone().strftime(
-                "%H:%M:%S"
-            )
         st.caption(
             f"Latest market check: {checked_at} | "
             f"{str(status.get('environment', 'unknown')).upper()} | "
-            f"{trading_mode} | Candle interval: {status.get('interval', 'N/A')} | "
-            f"Live price: {live_label}"
+            f"{trading_mode} | Candle interval: {status.get('interval', 'N/A')}"
         )
     else:
         st.warning("WAITING FOR BOT STATUS - start app.py to receive market checks.")
@@ -2495,7 +2492,7 @@ def render_market_check_cards():
             )
         else:
             levels_html = (
-                f'<details class="market-check-levels"><summary>🟠 RSI recovery</summary>'
+                f'<details class="market-check-levels"><summary title="RSI recovery" aria-label="RSI recovery">🟠 <span class="condition-initial" aria-hidden="true">R</span><span class="condition-full-title">RSI recovery</span></summary>'
                 f'<div class="market-check-grid">'
                 f'<div class="market-check-stat">Previous RSI<span>'
                 f'{format_market_number(market.get("previous_rsi"), 2)}</span></div>'
@@ -2504,7 +2501,7 @@ def render_market_check_cards():
                 f'<div class="market-check-stat">Recovery level<span>'
                 f'Cross above {buy_rsi_threshold:g}</span></div>'
                 f'</div></details>'
-                f'<details class="market-check-levels"><summary>🟡 Near support</summary>'
+                f'<details class="market-check-levels"><summary title="Near support" aria-label="Near support">🟡 <span class="condition-initial" aria-hidden="true">N</span><span class="condition-full-title">Near support</span></summary>'
                 f'<div class="market-check-grid">'
                 f'<div class="market-check-stat">Current price<span>'
                 f'{format_market_number(display_price)}</span></div>'
@@ -2516,7 +2513,7 @@ def render_market_check_cards():
                 f'<div class="market-check-stat">Allowed<span>'
                 f'&le; {allowed_support_distance}%</span></div>'
                 f'</div></details>'
-                f'<details class="market-check-levels"><summary>🔵 Trend</summary>'
+                f'<details class="market-check-levels"><summary title="Trend" aria-label="Trend">🔵 <span class="condition-initial" aria-hidden="true">T</span><span class="condition-full-title">Trend</span></summary>'
                 f'<div class="market-check-grid">'
                 f'<div class="market-check-stat">Trend price<span>'
                 f'{format_market_number(market.get("trend_price"))}</span></div>'
@@ -2526,7 +2523,7 @@ def render_market_check_cards():
                 f'{html.escape(str(market.get("trend_interval", "N/A")))}</span></div>'
                 f'<div class="market-check-stat">Required<span>Price above EMA</span></div>'
                 f'</div></details>'
-                f'<details class="market-check-levels"><summary>🟣 Reward</summary>'
+                f'<details class="market-check-levels"><summary title="Reward" aria-label="Reward">🟣 <span class="condition-initial" aria-hidden="true">R</span><span class="condition-full-title">Reward</span></summary>'
                 f'<div class="market-check-grid">'
                 f'<div class="market-check-stat">Suggested SL<span>'
                 f'{format_market_number(market.get("suggested_sl"))}</span></div>'
@@ -2538,7 +2535,7 @@ def render_market_check_cards():
                 f'<div class="market-check-stat">Required<span>'
                 f'&ge; {min_reward_threshold:g}%</span></div>'
                 f'</div></details>'
-                f'<details class="market-check-levels"><summary>🛡️ Stop risk</summary>'
+                f'<details class="market-check-levels"><summary title="Stop risk" aria-label="Stop risk">🛡️ <span class="condition-initial" aria-hidden="true">S</span><span class="condition-full-title">Stop risk</span></summary>'
                 f'<div class="market-check-grid">'
                 f'<div class="market-check-stat">Suggested SL<span>'
                 f'{format_market_number(market.get("suggested_sl"))}</span></div>'
@@ -2549,7 +2546,7 @@ def render_market_check_cards():
                 f'&le; {max_stop_distance_threshold:g}%</span></div>'
                 f'<div class="market-check-stat">Action<span>Skip if wider</span></div>'
                 f'</div></details>'
-                f'<details class="market-check-levels"><summary>🟦 EMA 9/21</summary>'
+                f'<details class="market-check-levels"><summary title="EMA 9/21" aria-label="EMA 9/21">🟦 <span class="condition-initial" aria-hidden="true">E</span><span class="condition-full-title">EMA 9/21</span></summary>'
                 f'<div class="market-check-grid">'
                 f'<div class="market-check-stat">EMA 9<span>'
                 f'{format_market_number(market.get("ema_9"))}</span></div>'
@@ -2821,6 +2818,10 @@ def render_max_status_strip():
     online = 0 <= status_age <= 120
     online_class = "max-status-online" if online else "max-status-offline"
     online_text = "● ONLINE" if online else "● OFFLINE"
+    live_label = (
+        datetime.fromtimestamp(float(live_prices["updated_at"])).astimezone().strftime("%H:%M:%S")
+        if live_prices.get("updated_at") else "waiting"
+    )
     market_regime = str(
         status.get("market_overview", {}).get("regime", "WAITING")
     ).upper()
@@ -2842,6 +2843,7 @@ def render_max_status_strip():
           <span class="max-status-item">Unrealized <strong class="{unrealized_class}">{today_unrealized:+.4f}</strong></span>
           <span class="max-status-market {market_class}">MARKET · {html.escape(market_regime)}</span>
           <span class="{online_class}">{online_text}</span>
+          <span class="max-status-item">Live price: {html.escape(live_label)}</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -3017,6 +3019,10 @@ def render_top_bar(show_more_metrics=True):
         bot_health_card_style = "bot-health-card-offline"
         bot_health_extra = '<div class="bot-health-last">Last online unknown</div>'
         bot_health_detail = "No completed market check is available."
+    live_label = (
+        datetime.fromtimestamp(float(live_prices["updated_at"])).astimezone().strftime("%H:%M:%S")
+        if live_prices.get("updated_at") else "waiting"
+    )
     tags = (
         f'<span class="target-tag">INTERVAL &middot; '
         f'{html.escape(active_interval)}</span>'
@@ -3029,6 +3035,7 @@ def render_top_bar(show_more_metrics=True):
         f'<span class="market-regime-tag{bot_health_style}" '
         f'title="{html.escape(bot_health_detail)}">BOT &middot; '
         f'{html.escape(bot_health)}</span>'
+        f'<span class="target-tag">Live price: {html.escape(live_label)}</span>'
     )
     today_class = "pnl-positive" if today_pnl >= 0 else "pnl-negative"
     today_unrealized_class = (
