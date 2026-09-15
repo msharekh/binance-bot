@@ -134,9 +134,9 @@ st.markdown(
     .position-progress-wrap {margin:1.85rem 0 .2rem}
     .position-progress-wrap-max {margin:.28rem 0 .2rem}
     .position-progress-wrap-max .position-current-label {top:.43rem}
-    .position-progress-track {position:relative;height:1.15rem;border-radius:.3rem;
+    .position-progress-track {position:relative;height:1.725rem;border-radius:.3rem;
       border:1px solid #64748b;box-shadow:inset 0 1px 3px rgba(0,0,0,.45)}
-    .position-progress-marker {position:absolute;top:-.14rem;width:.35rem;height:1.43rem;
+    .position-progress-marker {position:absolute;top:-.14rem;width:.35rem;height:calc(100% + .28rem);
       border-radius:999px;background:#f8fafc;border:1px solid #020617;
       box-shadow:0 0 7px rgba(255,255,255,.9);transform:translateX(-50%)}
     .position-current-label {position:absolute;top:-1.65rem;transform:translateX(-50%);
@@ -1546,32 +1546,33 @@ def render_position_progress(
                 st.success(
                     f"Sell price update to {sell_price:.8f} queued."
                 )
-    st.markdown(
-        position_candlestick_chart(
-            live_market.get("candles"),
-            current,
-            entry,
-            break_even_price,
-            stop_loss,
-            take_profit,
-            runtime_config.get("interval", "5m"),
-            max_view,
-            quantity=quantity,
-            fee_rate=fee_rate,
-            original_take_profit=float(position.get(
-                "strategy_take_profit",
-                entry + max(entry - stop_loss, 0)
-                * float(runtime_config.get("risk_reward_ratio", 2)),
-            )),
-            minimum_profit_price=(
-                (entry * quantity * (1 + fee_rate)
-                 + float(runtime_config.get("min_net_profit_usdt", 0.50)))
-                / (quantity * (1 - fee_rate))
-                if quantity > 0 and fee_rate < 1 else entry
+    if max_view:
+        st.markdown(
+            position_candlestick_chart(
+                live_market.get("candles"),
+                current,
+                entry,
+                break_even_price,
+                stop_loss,
+                take_profit,
+                runtime_config.get("interval", "5m"),
+                max_view,
+                quantity=quantity,
+                fee_rate=fee_rate,
+                original_take_profit=float(position.get(
+                    "strategy_take_profit",
+                    entry + max(entry - stop_loss, 0)
+                    * float(runtime_config.get("risk_reward_ratio", 2)),
+                )),
+                minimum_profit_price=(
+                    (entry * quantity * (1 + fee_rate)
+                     + float(runtime_config.get("min_net_profit_usdt", 0.50)))
+                    / (quantity * (1 - fee_rate))
+                    if quantity > 0 and fee_rate < 1 else entry
+                ),
             ),
-        ),
-        unsafe_allow_html=True,
-    )
+            unsafe_allow_html=True,
+        )
     progress_pct = progress * 100
     break_even_pct = (
         (break_even_price - stop_loss) / span * 100 if span > 0 else 50
@@ -2598,16 +2599,19 @@ def render_manual_buy(status, positions):
     open_symbols = set(positions)
     buyable_symbols = list(status.get("target_symbols", []))
     requested_buy_symbol = str(st.query_params.get("manual_buy", "")).upper()
-    valid_buy_request = requested_buy_symbol in buyable_symbols
-    if (
-        valid_buy_request
-        and st.session_state.get("manual_buy_query_symbol")
-        != requested_buy_symbol
-    ):
-        st.session_state["manual_buy_symbol"] = requested_buy_symbol
-        st.session_state["manual_buy_query_symbol"] = requested_buy_symbol
+    # Consume the card link once so a browser refresh cannot reopen the form.
+    if "manual_buy" in st.query_params:
+        del st.query_params["manual_buy"]
+        if requested_buy_symbol in buyable_symbols:
+            st.session_state["manual_buy_symbol"] = requested_buy_symbol
+            st.session_state["manual_buy_open"] = True
+    if not st.session_state.get("manual_buy_open", False):
+        return
     st.markdown('<div id="manual-buy"></div>', unsafe_allow_html=True)
-    with st.expander("🛒 Manual buy", expanded=valid_buy_request):
+    with st.expander("🛒 Manual buy", expanded=True):
+        if st.button("Close", key="close_manual_buy"):
+            st.session_state["manual_buy_open"] = False
+            st.rerun()
         st.warning(
             "Manual buy skips entry checks and places a real market order. "
             "Final price may vary."
@@ -3148,6 +3152,9 @@ def render_dashboard(open_trades_only=False):
     history = transaction_frame(read_transactions())
 
     if not open_trades_only:
+        render_manual_buy(status, positions)
+
+    if not open_trades_only:
         open_title_column, open_focus_column = st.columns([4, 1])
         with open_title_column:
             st.subheader("📈 Open trades")
@@ -3197,7 +3204,6 @@ def render_dashboard(open_trades_only=False):
         st.info("No open trades are currently being monitored.")
     if open_trades_only:
         return
-    render_manual_buy(status, positions)
     render_results_by_symbol(history)
     render_market_suggestions(status)
     render_targets_outside_watchlist(status, positions)
@@ -3314,9 +3320,9 @@ if open_trades_only:
         .position-candle-wrap {margin:.05rem 0!important}
         .position-candle-title {margin-bottom:.05rem!important}
         .position-progress-wrap-max {margin:.12rem 0 .05rem!important}
-        .position-progress-wrap-max .position-progress-track {height:.8rem!important}
+        .position-progress-wrap-max .position-progress-track {height:1.2rem!important}
         .position-progress-wrap-max .position-progress-marker {
-          height:1.03rem!important;top:-.1rem!important}
+          height:1.43rem!important;top:-.1rem!important}
         .position-progress-wrap-max .position-current-label {top:.25rem!important}
         .position-progress-labels,.position-progress-state {margin-top:.03rem!important}
         [data-testid="stMarkdownContainer"]:has(.max-status-strip) {
