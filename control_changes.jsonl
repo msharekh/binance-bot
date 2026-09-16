@@ -25,3 +25,5 @@
 {"recorded_at": 1789261762, "saved_at": "2026-09-13T04:09:22+03:00", "event": "controls_changed", "changes": {"risk_reward_ratio": {"old": "1.2", "new": "1.0"}}, "summary": ["TP reward/risk: 1.2 → 1"]}
 {"recorded_at": 1789317122, "saved_at": "2026-09-13T19:32:02+03:00", "event": "controls_changed", "changes": {"ignore_weak_market": {"old": false, "new": true}}, "summary": ["Ignore weak-market pause: Off → On"]}
 {"recorded_at": 1789422238, "saved_at": "2026-09-15T00:43:58+03:00", "event": "controls_changed", "changes": {"atr_sl_multiplier": {"old": "2.0", "new": "1.5"}}, "summary": ["Stop distance (ATR): 2 → 1.5"]}
+{"recorded_at": 1789480319, "saved_at": "2026-09-15T16:51:59+03:00", "event": "controls_changed", "changes": {"ignore_weak_market": {"old": true, "new": false}}, "summary": ["Ignore weak-market pause: On → Off"]}
+{"recorded_at": 1789508742, "saved_at": "2026-09-16T00:45:42+03:00", "event": "controls_changed", "changes": {"ignore_weak_market": {"old": false, "new": true}}, "summary": ["Ignore weak-market pause: Off → On"]}

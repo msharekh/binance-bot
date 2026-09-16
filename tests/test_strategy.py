@@ -222,11 +222,11 @@ class StrategySignalTests(unittest.TestCase):
                 strategy = {**self.strategy, "rsi_recovery_window": window}
                 analysis = app.analyze_market(FakeClient(), "TESTUSDT", "15m", strategy)
                 self.assertEqual(analysis["rsi_recovered"], expected)
-                self.assertTrue(analysis["buy_signal"])
+                self.assertEqual(analysis["buy_signal"], expected)
 
     @patch("app.calculate_atr")
     @patch("app.calculate_rsi")
-    def test_one_failed_confirmation_allows_buy_but_two_block(self, calculate_rsi, calculate_atr):
+    def test_one_or_more_failed_confirmations_block_buy(self, calculate_rsi, calculate_atr):
         calculate_rsi.side_effect = lambda data: pd.Series(
             [40.0] * (len(data) - 2) + [34.0, 36.0]
         )
@@ -237,7 +237,7 @@ class StrategySignalTests(unittest.TestCase):
         )
 
         self.assertFalse(analysis["near_support"])
-        self.assertTrue(analysis["buy_signal"])
+        self.assertFalse(analysis["buy_signal"])
 
         calculate_rsi.side_effect = lambda data: pd.Series([40.0] * len(data))
         analysis = app.analyze_market(
@@ -246,6 +246,29 @@ class StrategySignalTests(unittest.TestCase):
         self.assertFalse(analysis["rsi_recovered"])
         self.assertFalse(analysis["near_support"])
         self.assertFalse(analysis["buy_signal"])
+
+    @patch("app.calculate_atr")
+    @patch("app.calculate_rsi")
+    def test_failed_risk_or_reward_alone_blocks_buy(self, calculate_rsi, calculate_atr):
+        calculate_rsi.side_effect = lambda data: pd.Series(
+            [40.0] * (len(data) - 2) + [34.0, 36.0]
+        )
+        calculate_atr.side_effect = lambda data: pd.Series([0.5] * len(data))
+        checks = (
+            "rsi_recovered", "near_support", "trend_ok", "reward_ok",
+            "stop_risk_ok", "momentum_ok",
+        )
+        for failed, override in (
+            ("reward_ok", {"min_net_reward_pct": 10}),
+            ("stop_risk_ok", {"max_stop_distance_pct": 0.1}),
+        ):
+            with self.subTest(failed=failed):
+                analysis = app.analyze_market(
+                    FakeClient(), "TESTUSDT", "15m", {**self.strategy, **override}
+                )
+                for check in checks:
+                    self.assertEqual(analysis[check], check != failed)
+                self.assertFalse(analysis["buy_signal"])
 
     def test_watchlist_excludes_stablecoins_and_low_range_pairs(self):
         suggestions, overview = app.get_market_suggestions(

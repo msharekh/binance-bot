@@ -13,6 +13,7 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceOrderException
 from rich.console import Console
 from entry_conditions import capture_entry_conditions
+from commission_accounting import order_commissions, entry_cost, realized_profit
 from watchlist_automation import apply_watchlist_automation
 
 
@@ -400,10 +401,10 @@ def analyze_market(client, symbol, interval, strategy):
             )
         )
     )
-    buy_signal = sum(bool(check) for check in (
+    buy_signal = all((
         rsi_recovered, near_support, trend_ok, reward_ok,
         stop_risk_ok, momentum_ok,
-    )) >= 5
+    ))
     return {
         "entry": entry_price,
         "signal_candle_close_time": signal_candle_close_time,
@@ -1007,6 +1008,9 @@ def buy(
     executed_quantity = Decimal(order["executedQty"])
     quote_spent = Decimal(order["cummulativeQuoteQty"])
     average_price = quote_spent / executed_quantity
+    fees = order_commissions(client, order, rules)
+    executed_quantity -= Decimal(fees["base_commission_quantity"])
+    cost_basis = entry_cost(quote_spent, fees, existing_position)
     stop_distance = Decimal(str(analysis["stop_distance"]))
     reward_distance = Decimal(str(analysis["tp"] - analysis["entry"]))
     if existing_position:
@@ -1014,7 +1018,7 @@ def buy(
         existing_entry = Decimal(existing_position["entry"])
         combined_quantity = existing_quantity + executed_quantity
         average_price = (
-            existing_entry * existing_quantity + quote_spent
+            existing_entry * existing_quantity + average_price * executed_quantity
         ) / combined_quantity
         executed_quantity = combined_quantity
 
@@ -1036,6 +1040,13 @@ def buy(
         "order_id": order["orderId"],
         "quantity": str(executed_quantity),
         "entry": str(average_price),
+        "cost_basis_quote": cost_basis,
+        "cost_basis_status": (
+            "missing" if cost_basis is None else
+            "converted_estimate" if "converted_estimate" in (
+                fees["commission_status"], (existing_position or {}).get("cost_basis_status")
+            ) else "actual"
+        ),
         "stop_loss": str(average_price - stop_distance),
         "take_profit": str(take_profit),
         "strategy_take_profit": str(average_price + reward_distance),
@@ -1064,6 +1075,7 @@ def buy(
             ),
             "reason": reason,
             "entry_conditions": entry_conditions,
+            **fees,
         }
     )
     print_status(
@@ -1102,15 +1114,38 @@ def sell(client, symbol, rules, position, analysis, positions, reason):
     average_price = quote_received / executed_quantity
     entry_price = Decimal(position["entry"])
     estimated_pnl = (average_price - entry_price) * executed_quantity
+    fees = order_commissions(client, order, rules)
+    profit, remaining = realized_profit(position, executed_quantity, quote_received, fees)
+    remaining_cost = (
+        str(Decimal(position["cost_basis_quote"]) * remaining / tracked_quantity)
+        if position.get("cost_basis_quote") is not None else None
+    )
+    tradable_remaining = round_to_step(remaining, rules["step_size"])
+    keep_remaining = (
+        tradable_remaining > 0
+        and tradable_remaining >= rules["min_quantity"]
+        and tradable_remaining * average_price >= rules["min_notional"]
+    )
     record_transaction(
         {
             "side": "SELL", "symbol": symbol, "order_id": order["orderId"],
             "quantity": str(executed_quantity), "price": str(average_price),
             "quote_amount": str(quote_received), "quote_asset": rules["quote_asset"],
             "reason": reason, "estimated_pnl_usdt": str(estimated_pnl),
+            **fees,
+            **profit,
+            "remaining_quantity": str(remaining),
+            "remaining_cost_basis_quote": remaining_cost,
+            "remaining_is_dust": remaining > 0 and not keep_remaining,
         }
     )
-    positions.pop(symbol, None)
+    if keep_remaining:
+        position["quantity"] = str(remaining)
+        if position.get("cost_basis_quote") is not None:
+            position["cost_basis_quote"] = remaining_cost
+        positions[symbol] = position
+    else:
+        positions.pop(symbol, None)
     save_positions(positions)
     print_status(
         f"{symbol} SELL filled: {executed_quantity}. Reason: {reason}",

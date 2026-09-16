@@ -342,7 +342,7 @@ def play_action_sound(transaction, sound_kind=None):
             sound_kind = "buy"
         else:
             try:
-                pnl = float(transaction.get("estimated_pnl_usdt", 0) or 0)
+                pnl = float(transaction.get("net_pnl_usdt") or 0)
             except (TypeError, ValueError):
                 pnl = 0
             sound_kind = "profit" if pnl > 0 else "loss" if pnl < 0 else "neutral"
@@ -1110,25 +1110,37 @@ def transaction_frame(transactions):
     one_way_fee_pct = float(
         config.get("estimated_round_trip_fee_pct", 0.2)
     ) / 2
-    history["Est. Fee (USDT)"] = history["Value"] * one_way_fee_pct / 100
-    history["Est. Net P&L (USDT)"] = float("nan")
+    history["Fee (USDT)"] = history["Value"] * one_way_fee_pct / 100
+    history["Net P&L (USDT)"] = float("nan")
     pending_buy_fees = {}
     for index, row in history.iterrows():
         symbol = str(row.get("Symbol", ""))
         if str(row.get("Side", "")).upper() == "BUY":
             pending_buy_fees.setdefault(symbol, []).append(
-                float(row.get("Est. Fee (USDT)", 0) or 0)
+                float(row.get("Fee (USDT)", 0) or 0)
             )
         elif str(row.get("Side", "")).upper() == "SELL":
             buy_fees = pending_buy_fees.get(symbol, [])
             buy_fee = buy_fees.pop(0) if buy_fees else 0
             gross_pnl = row.get("Est. P&L (USDT)")
             if not pd.isna(gross_pnl):
-                history.at[index, "Est. Net P&L (USDT)"] = (
+                history.at[index, "Net P&L (USDT)"] = (
                     float(gross_pnl)
                     - buy_fee
-                    - float(row.get("Est. Fee (USDT)", 0) or 0)
+                    - float(row.get("Fee (USDT)", 0) or 0)
                 )
+    history["P&L basis"] = "legacy fee estimate"
+    for index, transaction in enumerate(transactions):
+        if "commission_status" in transaction:
+            history.at[index, "Fee (USDT)"] = pd.to_numeric(
+                transaction.get("commission_quote"), errors="coerce"
+            )
+            history.at[index, "Net P&L (USDT)"] = pd.to_numeric(
+                transaction.get("net_pnl_usdt"), errors="coerce"
+            )
+            history.at[index, "P&L basis"] = transaction.get(
+                "pnl_status", transaction["commission_status"]
+            )
     return history
 
 
@@ -1828,18 +1840,18 @@ def render_results_by_symbol(history):
         if history.empty:
             st.info("No completed trades are available for symbol results yet.")
             return
-        sells = history[history["Side"] == "SELL"].copy()
+        sells = history[history["Side"] == "SELL"].dropna(subset=["Net P&L (USDT)"]).copy()
         if sells.empty:
             st.info("No completed trades are available for symbol results yet.")
             return
-        sells["Win"] = sells["Est. Net P&L (USDT)"].fillna(0) > 0
+        sells["Win"] = sells["Net P&L (USDT)"].fillna(0) > 0
         results = (
             sells.groupby("Symbol", dropna=False)
             .agg(
                 completed=("Side", "size"),
                 wins=("Win", "sum"),
-                total_pnl=("Est. Net P&L (USDT)", "sum"),
-                average_pnl=("Est. Net P&L (USDT)", "mean"),
+                total_pnl=("Net P&L (USDT)", "sum"),
+                average_pnl=("Net P&L (USDT)", "mean"),
             )
             .reset_index()
             .sort_values("total_pnl", ascending=False)
@@ -1886,7 +1898,7 @@ def filter_history(history):
         period_history = history[period_masks[period_name]]
         completed = period_history[period_history["Side"] == "SELL"]
         wins = int(
-            (completed["Est. Net P&L (USDT)"].fillna(0) > 0).sum()
+            (completed["Net P&L (USDT)"].fillna(0) > 0).sum()
         )
         return wins, len(completed)
 
@@ -1953,8 +1965,10 @@ def filter_history(history):
 def transaction_result(row):
     if str(row.get("Side", "")).upper() != "SELL":
         return "ENTRY"
-    pnl = row.get("Est. Net P&L (USDT)")
-    if pd.isna(pnl) or float(pnl) == 0:
+    pnl = row.get("Net P&L (USDT)")
+    if pd.isna(pnl):
+        return "UNKNOWN"
+    if float(pnl) == 0:
         return "BREAK EVEN"
     return "PROFIT" if float(pnl) > 0 else "LOSS"
 
@@ -2093,7 +2107,7 @@ def render_market_check_cards():
         result = symbol_results.setdefault(symbol, {"wins": 0, "completed": 0})
         result["completed"] += 1
         try:
-            if float(transaction.get("Est. Net P&L (USDT)", 0)) > 0:
+            if float(transaction.get("Net P&L (USDT)", 0)) > 0:
                 result["wins"] += 1
         except (TypeError, ValueError):
             pass
@@ -2790,9 +2804,9 @@ def render_max_status_strip():
         ]
         today_completed = len(sells)
         today_wins = int(
-            (sells["Est. Net P&L (USDT)"].fillna(0) > 0).sum()
+            (sells["Net P&L (USDT)"].fillna(0) > 0).sum()
         )
-        today_realized = float(sells["Est. Net P&L (USDT)"].sum())
+        today_realized = float(sells["Net P&L (USDT)"].sum())
     win_rate = (
         f"{today_wins / today_completed * 100:.1f}%"
         if today_completed else "N/A"
@@ -2901,23 +2915,23 @@ def render_top_bar(show_more_metrics=True):
     all_win_rate = None
     if not history.empty:
         sells = history[history["Side"] == "SELL"]
-        total_pnl = float(sells["Est. Net P&L (USDT)"].sum())
+        total_pnl = float(sells["Net P&L (USDT)"].sum())
         today_sells = sells[
             sells["Time"].dt.date == datetime.now().astimezone().date()
         ]
-        today_pnl = float(today_sells["Est. Net P&L (USDT)"].sum())
+        today_pnl = float(today_sells["Net P&L (USDT)"].sum())
         if not today_sells.empty:
             today_completed_trades = len(today_sells)
             today_wins = int(
-                (today_sells["Est. Net P&L (USDT)"].fillna(0) > 0).sum()
+                (today_sells["Net P&L (USDT)"].fillna(0) > 0).sum()
             )
             today_win_rate = float(
-                (today_sells["Est. Net P&L (USDT)"].fillna(0) > 0).mean()
+                (today_sells["Net P&L (USDT)"].dropna() > 0).mean()
                 * 100
             )
         if not sells.empty:
             all_win_rate = float(
-                (sells["Est. Net P&L (USDT)"].fillna(0) > 0).mean() * 100
+                (sells["Net P&L (USDT)"].dropna() > 0).mean() * 100
             )
     status_markets = status.get("markets", {})
     for symbol, position in positions.items():
@@ -3213,10 +3227,11 @@ def render_dashboard(open_trades_only=False):
         return
     st.subheader("🧾 Transactions")
     filtered = filter_history(history).sort_values("Time", ascending=False)
+    st.caption("Net P&L deducts entry and exit commissions. Legacy rows use estimated fees; converted_estimate uses a market price to value non-quote fees. Missing costs show UNKNOWN and are excluded from P&L totals.")
     detail_columns = [
         "Time", "Environment", "Market status", "Side", "Result", "Symbol", "Quantity", "Price",
-        "Value", "Est. Fee (USDT)", "Quote asset", "Est. P&L (USDT)",
-        "Est. Net P&L (USDT)", "Reason", "Order ID",
+        "Value", "Fee (USDT)", "Quote asset", "Est. P&L (USDT)",
+        "Net P&L (USDT)", "P&L basis", "Reason", "Order ID",
     ]
     filtered = filtered.copy()
     filtered["Result"] = filtered.apply(transaction_result, axis=1)
@@ -3234,10 +3249,11 @@ def render_dashboard(open_trades_only=False):
     compact_frame["Outcome"] = filtered["Result"].map(transaction_outcome)
     compact_frame["Market"] = filtered["Market status"].map(market_status_icon)
     compact_frame["Amount"] = filtered["Value"].map(format_usdt)
-    compact_frame["Fee"] = filtered["Est. Fee (USDT)"].map(
+    compact_frame["Fee"] = filtered["Fee (USDT)"].map(
         lambda value: format_usdt(value, approximate=True)
     )
-    compact_frame["Net P&L"] = filtered["Est. Net P&L (USDT)"].map(
+    compact_frame["P&L basis"] = filtered["P&L basis"]
+    compact_frame["Net P&L"] = filtered["Net P&L (USDT)"].map(
         lambda value: format_usdt(value, signed=True, approximate=True)
     )
     compact_frame["Reason"] = filtered["Reason"].map(transaction_reason_icon)
@@ -3283,13 +3299,13 @@ def render_dashboard(open_trades_only=False):
                 "Quantity": smart_number,
                 "Price": smart_number,
                 "Value": format_usdt,
-                "Est. Fee (USDT)": lambda value: format_usdt(
+                "Fee (USDT)": lambda value: format_usdt(
                     value, approximate=True
                 ),
                 "Est. P&L (USDT)": lambda value: format_usdt(
                     value, signed=True, approximate=True
                 ),
-                "Est. Net P&L (USDT)": lambda value: format_usdt(
+                "Net P&L (USDT)": lambda value: format_usdt(
                     value, signed=True, approximate=True
                 ),
             },
