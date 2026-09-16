@@ -696,8 +696,8 @@ def render_settings_panel():
             ("Max positions", max_open_positions,
              f"Maximum number of open markets. At {max_open_positions} positions, no new market is opened. Lowering this does not close existing positions."),
         ])
-        st.caption("Automatic entry requires any 5 of 6 checks. One failed check is allowed, including the stop-distance or minimum-reward filter. Capital limits and buy pauses still apply.")
-        guide_table("Buy filters — at least 5 of 6 must pass", [
+        st.caption("Automatic entry requires all 6 checks. Any failed check blocks a buy. Capital limits and buy pauses still apply.")
+        guide_table("Buy filters — all 6 must pass", [
             ("RSI recovery", f"{buy_rsi_recovery:g}",
              f"RSI (a momentum indicator) must cross upward through {buy_rsi_recovery:g}; the latest RSI must remain above it and keep rising."),
             ("RSI recovery window", f"{rsi_recovery_window} completed candles",
@@ -872,7 +872,7 @@ def render_settings_panel():
                 with live_column:
                     live_price_refresh_seconds_input = st.number_input("Live price / TP check (seconds)", min_value=2, max_value=60, value=live_price_refresh_seconds, step=1, help="Refresh live prices and check take-profit during the analysis pause. Analysis and network work can delay checks.")
             with buy_tab:
-                st.caption("At least 5 of 6 checks must pass before a new buy. One failed check is allowed, including risk or reward.")
+                st.caption("All 6 checks must pass before a new buy, including risk and reward.")
                 rsi_column, support_column = st.columns(2)
                 with rsi_column:
                     buy_rsi_recovery_input = st.number_input(
@@ -1113,15 +1113,33 @@ def transaction_frame(transactions):
     history["Fee (USDT)"] = history["Value"] * one_way_fee_pct / 100
     history["Net P&L (USDT)"] = float("nan")
     pending_buy_fees = {}
-    for index, row in history.iterrows():
+    for index, row in history.sort_values("recorded_at", kind="stable").iterrows():
         symbol = str(row.get("Symbol", ""))
+        environment = row.get("Environment")
+        key = (None if pd.isna(environment) else str(environment), symbol)
         if str(row.get("Side", "")).upper() == "BUY":
-            pending_buy_fees.setdefault(symbol, []).append(
-                float(row.get("Fee (USDT)", 0) or 0)
+            pending_buy_fees[key] = (
+                pending_buy_fees.get(key, 0)
+                + float(row.get("Fee (USDT)", 0) or 0)
             )
         elif str(row.get("Side", "")).upper() == "SELL":
-            buy_fees = pending_buy_fees.get(symbol, [])
-            buy_fee = buy_fees.pop(0) if buy_fees else 0
+            buy_fee = pending_buy_fees.pop(key, 0)
+            # Legacy sell() removed the whole tracked position, including dust.
+            # Newer rows explicitly record retained inventory for partial sales.
+            remaining = pd.to_numeric(row.get("remaining_quantity"), errors="coerce")
+            sold = pd.to_numeric(row.get("Quantity"), errors="coerce")
+            dust = row.get("remaining_is_dust")
+            is_dust = not pd.isna(dust) and bool(dust)
+            if pd.notna(remaining) and remaining > 0 and not is_dust:
+                if pd.notna(sold) and sold > 0:
+                    base_fee = pd.to_numeric(row.get("base_commission_quantity"), errors="coerce")
+                    removed = sold + (0 if pd.isna(base_fee) else base_fee)
+                    retained_fee = buy_fee * remaining / (removed + remaining)
+                    pending_buy_fees[key] = retained_fee
+                    buy_fee -= retained_fee
+                else:
+                    pending_buy_fees[key] = buy_fee
+                    buy_fee = float("nan")
             gross_pnl = row.get("Est. P&L (USDT)")
             if not pd.isna(gross_pnl):
                 history.at[index, "Net P&L (USDT)"] = (
@@ -1374,7 +1392,7 @@ def condition_percentages_html(market, config, position=None):
     passed = sum(bool(market.get(key)) for key in checks)
     buy_text = f"{passed / len(checks) * 100:.0f}%" if known else "N/A"
     buy_detail = (
-        f"{passed}/6 entry checks met; at least 5 required. Market pause, trading hold, limits and "
+        f"{passed}/6 entry checks met; all 6 required. Market pause, trading hold, limits and "
         "candle cooldown still apply. This is not a probability."
     ) if known else "Waiting for all six entry checks."
     sell_text = "N/A"
@@ -2111,9 +2129,7 @@ def render_market_check_cards():
                 result["wins"] += 1
         except (TypeError, ValueError):
             pass
-    allowed_support_distance = format_market_number(
-        config.get("max_support_distance_pct", 0.5), 2
-    )
+    allowed_support_distance = float(config.get("max_support_distance_pct", 0.5))
     buy_rsi_threshold = float(config.get("buy_rsi_recovery", 40))
     min_reward_threshold = float(config.get("min_net_reward_pct", 0.6))
     max_stop_distance_threshold = float(
@@ -2178,7 +2194,7 @@ def render_market_check_cards():
                     else:
                         score = 0
                 elif check_name == "near_support":
-                    score = float(allowed_support_distance) / float(
+                    score = allowed_support_distance / float(
                         market["distance_to_support_pct"]
                     )
                 elif check_name == "trend_ok":
@@ -2191,10 +2207,16 @@ def render_market_check_cards():
                         float(market["expected_net_reward_pct"])
                         / min_reward_threshold
                     )
-                else:
+                elif check_name == "stop_risk_ok":
                     score = max_stop_distance_threshold / float(
                         market["stop_distance_pct"]
                     )
+                elif check_name == "momentum_ok":
+                    ema_9 = float(market["ema_9"])
+                    ema_21 = float(market["ema_21"])
+                    score = ema_9 / ema_21 if ema_21 > 0 else 0
+                else:
+                    score = 0
             except (KeyError, TypeError, ValueError, ZeroDivisionError):
                 score = 0
             scores.append(max(0.0, min(score, 0.99)))
@@ -2405,7 +2427,7 @@ def render_market_check_cards():
                                 )
                         elif check_name == "near_support":
                             distance = float(market.get("distance_to_support_pct"))
-                            proximity = float(allowed_support_distance) / distance
+                            proximity = allowed_support_distance / distance
                         elif check_name == "trend_ok":
                             trend_price = float(market.get("trend_price"))
                             trend_ema = float(market.get("trend_ema"))
@@ -2526,7 +2548,7 @@ def render_market_check_cards():
                 f'{format_market_number(market.get("distance_to_support_pct"), 2)}%'
                 f'</span></div>'
                 f'<div class="market-check-stat">Allowed<span>'
-                f'&le; {allowed_support_distance}%</span></div>'
+                f'&le; {format_market_number(allowed_support_distance, 2)}%</span></div>'
                 f'</div></details>'
                 f'<details class="market-check-levels"><summary title="Trend" aria-label="Trend">🔵 <span class="condition-initial" aria-hidden="true">T</span><span class="condition-full-title">Trend</span></summary>'
                 f'<div class="market-check-grid">'
