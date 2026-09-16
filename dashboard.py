@@ -836,26 +836,29 @@ def render_settings_panel():
                 st.caption("Capital limits and the completed-candle interval.")
                 trade_column, exposure_column = st.columns(2)
                 with trade_column:
-                    trade_amount_input = st.number_input(
+                    trade_amount_input = st.slider(
                         "USDT per trade",
                         min_value=1.0,
+                        max_value=max(500.0, float(trade_amount)),
                         value=float(trade_amount),
                         step=1.0,
                         help="Maximum USDT requested for one new buy.",
                     )
                 with exposure_column:
-                    maximum_input = st.number_input(
+                    maximum_input = st.slider(
                         "Total exposure",
                         min_value=1.0,
+                        max_value=max(2000.0, float(maximum)),
                         value=float(maximum),
                         step=1.0,
                         help="Combined original entry value allowed across positions.",
                     )
                 positions_column, interval_column = st.columns(2)
                 with positions_column:
-                    max_open_positions_input = st.number_input(
+                    max_open_positions_input = st.slider(
                         "Max positions",
                         min_value=1,
+                        max_value=max(20, max_open_positions),
                         value=max_open_positions,
                         step=1,
                     )
@@ -868,9 +871,9 @@ def render_settings_panel():
                     )
                 speed_column, live_column = st.columns(2)
                 with speed_column:
-                    poll_seconds_input = st.number_input("Full analysis pause (seconds)", min_value=10, max_value=300, value=poll_seconds, step=5, help="Wait between full market analyses. Buy signals and stop-loss use completed candles.")
+                    poll_seconds_input = st.slider("Full analysis pause (seconds)", min_value=10, max_value=300, value=poll_seconds, step=5, help="Wait between full market analyses. Buy signals and stop-loss use completed candles.")
                 with live_column:
-                    live_price_refresh_seconds_input = st.number_input("Live price / TP check (seconds)", min_value=2, max_value=60, value=live_price_refresh_seconds, step=1, help="Refresh live prices and check take-profit during the analysis pause. Analysis and network work can delay checks.")
+                    live_price_refresh_seconds_input = st.slider("Live price / TP check (seconds)", min_value=2, max_value=60, value=live_price_refresh_seconds, step=1, help="Refresh live prices and check take-profit during the analysis pause. Analysis and network work can delay checks.")
             with buy_tab:
                 st.caption("All 6 checks must pass before a new buy, including risk and reward.")
                 rsi_column, support_column = st.columns(2)
