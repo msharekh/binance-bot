@@ -875,7 +875,7 @@ def render_settings_panel():
                 st.caption("All 6 checks must pass before a new buy, including risk and reward.")
                 rsi_column, support_column = st.columns(2)
                 with rsi_column:
-                    buy_rsi_recovery_input = st.number_input(
+                    buy_rsi_recovery_input = st.slider(
                         "RSI recovery",
                         min_value=1.0,
                         max_value=50.0,
@@ -883,7 +883,7 @@ def render_settings_panel():
                         step=1.0,
                         help="RSI must cross upward through this level.",
                     )
-                    rsi_recovery_window_input = st.number_input(
+                    rsi_recovery_window_input = st.slider(
                         "RSI recovery window (completed candles)",
                         min_value=1, max_value=10, value=rsi_recovery_window, step=1,
                         help="1 requires a cross on the latest closed candle. "
@@ -892,7 +892,7 @@ def render_settings_panel():
                         "higher than the previous candle's RSI.",
                     )
                 with support_column:
-                    max_support_distance_input = st.number_input(
+                    max_support_distance_input = st.slider(
                         "Support distance %",
                         min_value=0.0,
                         max_value=5.0,
@@ -909,7 +909,7 @@ def render_settings_panel():
                         help="Must be equal to or longer than the trade interval.",
                     )
                 with ema_column:
-                    trend_ema_period_input = st.number_input(
+                    trend_ema_period_input = st.slider(
                         "EMA period",
                         min_value=10,
                         max_value=500,
@@ -918,7 +918,7 @@ def render_settings_panel():
                     )
                 reward_column, fee_column = st.columns(2)
                 with reward_column:
-                    min_net_reward_input = st.number_input(
+                    min_net_reward_input = st.slider(
                         "Minimum net TP %",
                         min_value=0.0,
                         max_value=20.0,
@@ -927,7 +927,7 @@ def render_settings_panel():
                         format="%.2f",
                     )
                 with fee_column:
-                    estimated_fee_input = st.number_input(
+                    estimated_fee_input = st.slider(
                         "Fees + slippage %",
                         min_value=0.0,
                         max_value=5.0,
@@ -936,7 +936,7 @@ def render_settings_panel():
                         format="%.2f",
                         help="Estimated combined buy and sell cost.",
                     )
-                max_stop_distance_input = st.number_input(
+                max_stop_distance_input = st.slider(
                     "Maximum stop distance %",
                     min_value=0.1,
                     max_value=10.0,
@@ -953,7 +953,7 @@ def render_settings_panel():
                 st.caption("Protection settings and the indicator exit.")
                 stop_column, ratio_column = st.columns(2)
                 with stop_column:
-                    atr_sl_multiplier_input = st.number_input(
+                    atr_sl_multiplier_input = st.slider(
                         "Stop distance (ATR)",
                         min_value=0.1,
                         max_value=10.0,
@@ -962,7 +962,7 @@ def render_settings_panel():
                         format="%.2f",
                     )
                 with ratio_column:
-                    risk_reward_ratio_input = st.number_input(
+                    risk_reward_ratio_input = st.slider(
                         "TP reward/risk",
                         min_value=0.1,
                         max_value=10.0,
@@ -970,19 +970,19 @@ def render_settings_panel():
                         step=0.1,
                         format="%.2f",
                     )
-                sell_rsi_threshold_input = st.number_input(
+                sell_rsi_threshold_input = st.slider(
                     "RSI exit level",
                     min_value=50.0,
                     max_value=99.0,
                     value=sell_rsi_threshold,
                     step=1.0,
                 )
-                min_net_profit_input = st.number_input(
+                min_net_profit_input = st.slider(
                     "Minimum net profit (USDT)",
                     min_value=0.0,
-                    max_value=1000.0,
-                    value=min_net_profit_usdt,
-                    step=0.10,
+                    max_value=25.0,
+                    value=min(min_net_profit_usdt, 25.0),
+                    step=0.05,
                     format="%.2f",
                     help=(
                         "Minimum estimated profit after buy and sell fees. "
